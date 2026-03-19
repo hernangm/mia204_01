@@ -1,0 +1,83 @@
+openapi: 3.0.3
+info:
+  title: Oil & Gas Forecast API
+  version: 1.0.0
+  description: API simple para consultar el listado de pozos y sus pronósticos de producción.
+
+
+paths:
+  /api/v1/forecast:
+    get:
+      summary: Obtiene el pronóstico de producción de un pozo.
+      parameters:
+        - name: id_well
+          in: query
+          required: true
+          description: Identificador del pozo.
+          schema:
+            type: string
+        - name: date_start
+          in: query
+          required: true
+          description: Fecha de inicio (YYYY-MM-DD).
+          schema:
+            type: string
+            format: date
+        - name: date_end
+          in: query
+          required: true
+          description: Fecha de fin (YYYY-MM-DD).
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Pronóstico obtenido exitosamente.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id_well:
+                    type: string
+                    example: "POZO-001"
+                  data:
+                    type: array
+                    description: Arreglo con la producción esperada.
+                    items:
+                      type: object
+                      properties:
+                        date:
+                          type: string
+                          format: date
+                          example: "2023-10-01"
+                        prod:
+                          type: number
+                          format: float
+                          example: 150.5
+
+
+  /api/v1/wells:
+    get:
+      summary: Obtiene el listado de pozos.
+      parameters:
+        - name: date_query
+          in: query
+          required: true
+          description: Fecha para la cual se hace la consulta (YYYY-MM-DD).
+          schema:
+            type: string
+            format: date
+      responses:
+        '200':
+          description: Listado de pozos obtenido exitosamente.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id_well:
+                      type: string
+                      example: "POZO-001"

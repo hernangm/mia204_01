@@ -1,5 +1,8 @@
 /.env
-/dags/__pycache__
-/config
 /.claude
-/logs
+/data
+/airflow/config
+/airflow/logs
+__pycache__
+*.pyc
+__init__.py
