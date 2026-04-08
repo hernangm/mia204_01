@@ -53,7 +53,6 @@ x-airflow-common:
     postgres:
       condition: service_healthy
 
-
 services:
 
   # ============================================================
@@ -92,7 +91,6 @@ services:
       start_period: 30s
     restart: always
 
-
   # ============================================================
   # PLATAFORMA ML
   # ============================================================
@@ -109,7 +107,7 @@ services:
     ports:
       - "5000:5000"
     environment:
-      MLFLOW_TRACKING_URI: http://localhost:5000
+      MLFLOW_TRACKING_URI: http://mlflow:5000
     volumes:
       - mlflow-artifacts:/mlflow/artifacts
     command: >
@@ -122,13 +120,12 @@ services:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:5000/')\" || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 30s
     restart: always
-
 
   # ============================================================
   # APLICACIÓN
@@ -156,7 +153,7 @@ services:
       mlflow:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\" || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -186,7 +183,6 @@ services:
         condition: service_healthy
       mlflow:
         condition: service_healthy
-
 
   # ============================================================
   # AIRFLOW  (orquestación — entrega final)
@@ -351,7 +347,6 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
-
 
 volumes:
   postgres-db-volume:
