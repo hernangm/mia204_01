@@ -46,11 +46,10 @@
 ---
 x-airflow-common:
   &airflow-common
-  # In order to add custom dependencies or upgrade provider distributions you can use your extended image.
-  # Comment the image line, place your Dockerfile in the directory where you placed the docker-compose.yaml
-  # and uncomment the "build" line below, Then run `docker-compose build` to build the images.
-  image: ${AIRFLOW_IMAGE_NAME:-apache/airflow:3.1.7}
-  # build: .
+  # Build a local image that bakes in pandas / scikit-learn / mlflow via airflow/requirements.txt.
+  # This replaces the slower, non-reproducible _PIP_ADDITIONAL_REQUIREMENTS pattern.
+  build:
+    context: ./airflow
   env_file:
     - ${ENV_FILE_PATH:-.env}
   environment:
@@ -69,16 +68,15 @@ x-airflow-common:
     # See https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/logging-monitoring/check-health.html#scheduler-health-check-server
     # yamllint enable rule:line-length
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
-    # WARNING: Use _PIP_ADDITIONAL_REQUIREMENTS option ONLY for a quick checks
-    # for other purpose (development, test and especially production usage) build/extend Airflow image.
-    _PIP_ADDITIONAL_REQUIREMENTS: ${_PIP_ADDITIONAL_REQUIREMENTS:-}
     # The following line can be used to set a custom config file, stored in the local config folder
     AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
+    MLFLOW_TRACKING_URI: 'http://mlflow:9090'
   volumes:
-    - ${AIRFLOW_PROJ_DIR:-.}/dags:/opt/airflow/dags
+    - ${AIRFLOW_PROJ_DIR:-.}/airflow/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
-    - ${AIRFLOW_PROJ_DIR:-.}/config:/opt/airflow/config
-    - ${AIRFLOW_PROJ_DIR:-.}/plugins:/opt/airflow/plugins
+    - ${AIRFLOW_PROJ_DIR:-.}/airflow/config:/opt/airflow/config
+    - ${AIRFLOW_PROJ_DIR:-.}/airflow/plugins:/opt/airflow/plugins
+    - ./mlruns:/mlflow/mlruns
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
@@ -96,6 +94,8 @@ services:
       POSTGRES_DB: airflow
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
+      # Init scripts run automatically on first start of a fresh volume (alphabetical order).
+      - ./db:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "airflow"]
       interval: 10s
@@ -332,6 +332,70 @@ services:
       <<: *airflow-common-depends-on
       airflow-init:
         condition: service_completed_successfully
+
+  mlflow:
+    build:
+      context: ./mlflow
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./mlruns:/mlflow/mlruns
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      mlflow server
+      --backend-store-uri postgresql://airflow:airflow@postgres/mlflow
+      --default-artifact-root /mlflow/mlruns
+      --host 0.0.0.0
+      --port 9090
+      --allowed-hosts "*"
+
+  api:
+    build:
+      context: ./api
+    env_file:
+      - ${ENV_FILE_PATH:-.env}
+    environment:
+      DATABASE_URL: postgresql+psycopg2://airflow:airflow@postgres:5432/featurestore
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()\""
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    restart: always
+
+  api-test:
+    build:
+      context: ./api
+    env_file:
+      - ${ENV_FILE_PATH:-.env}
+    environment:
+      DATABASE_URL: postgresql+psycopg2://airflow:airflow@postgres:5432/featurestore_test
+    ports:
+      - "8001:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()\""
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 15s
+    restart: always
+    profiles:
+      - test
 
 volumes:
   postgres-db-volume:

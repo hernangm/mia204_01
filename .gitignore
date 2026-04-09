@@ -1,5 +1,20 @@
+# Secrets & local env
 /.env
-/dags/__pycache__
-/config
-/.claude
-/logs
+
+# Claude workspace
+/.claude/
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# Airflow runtime
+/logs/
+
+# MLflow runtime (artifacts; backend store lives in Postgres)
+/mlruns/
+
+# Raw datasets (downloaded at runtime, ~164 MB)
+/data/raw/

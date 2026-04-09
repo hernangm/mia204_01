@@ -1,0 +1,5 @@
+# Task-level dependencies baked into the Airflow image.
+# Pin major versions; compatible with apache/airflow:3.1.7 (Python 3.12).
+pandas~=2.2
+scikit-learn~=1.5
+mlflow~=3.10

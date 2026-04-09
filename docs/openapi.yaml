@@ -1,0 +1,107 @@
+openapi: 3.0.3
+info:
+  title: MIA204 API
+  version: 1.0.0
+  description: API para consulta de pozos y pronóstico de producción.
+servers:
+  - url: http://localhost:8000
+paths:
+  /api/v1/wells:
+    get:
+      summary: Listado de pozos disponibles
+      operationId: listWells
+      parameters:
+        - name: date_query
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+          description: Fecha de consulta
+      responses:
+        '200':
+          description: Lista de pozos
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WellItem'
+        '422':
+          description: Error de validación en query params
+        '503':
+          description: Backend temporalmente no disponible
+  /api/v1/forecast:
+    get:
+      summary: Pronóstico de producción por pozo
+      operationId: getForecast
+      parameters:
+        - name: id_well
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+          description: ID del pozo
+        - name: date_start
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+          description: Fecha inicio del rango
+        - name: date_end
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+          description: Fecha fin del rango
+      responses:
+        '200':
+          description: Pronóstico para el pozo en el rango solicitado
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ForecastResponse'
+        '422':
+          description: Error de validación en query params
+        '503':
+          description: Backend temporalmente no disponible
+components:
+  schemas:
+    WellItem:
+      type: object
+      required:
+        - id_well
+      properties:
+        id_well:
+          type: string
+          example: POZO-001
+    ForecastPoint:
+      type: object
+      required:
+        - date
+        - prod
+      properties:
+        date:
+          type: string
+          format: date
+          example: 2023-10-01
+        prod:
+          type: number
+          format: float
+          example: 150.5
+    ForecastResponse:
+      type: object
+      required:
+        - id_well
+        - data
+      properties:
+        id_well:
+          type: string
+          example: POZO-001
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ForecastPoint'

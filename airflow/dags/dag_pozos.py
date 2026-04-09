@@ -4,7 +4,6 @@ from airflow.decorators import dag, task
 from airflow.models.param import Param
 from airflow.operators.empty import EmptyOperator
 
-DATASET_DOWNLOAD_URL = "http://datos.energia.gob.ar/dataset/c846e79c-026c-4040-897f-1ad3543b407c/resource/b5b58cdc-9e07-41f9-b392-fb9ec68b0725/download/produccin-de-pozos-de-gas-y-petrleo-no-convencional.csv"
 
 @dag(
     dag_id='ml_pipeline',
@@ -31,16 +30,17 @@ def ml_pipeline():
   )
 
   @task
-  def download_dataset(url, save_path):
-    """Descarga un dataset CSV desde una URL y lo guarda en disco.
-    Args: url (str) - URL de descarga, save_path (str) - ruta local del archivo.
+  def download_dataset(save_path):
+    """Descarga un dataset CSV desde la URL definida en ml_pipeline.config y lo guarda en disco.
+    Args: save_path (str) - ruta local del archivo.
     Retorna: la ruta del archivo guardado.
     """
     # Importamos dentro de la funcion porque en Airflow cada task se ejecuta
     # en su propio proceso; los imports de arriba del archivo son solo para Airflow.
     import pandas as pd
-    print(f"Iniciando descarga desde: {url}")
-    df = pd.read_csv(url)
+    from ml_pipeline.config import DATASET_DOWNLOAD_URL
+    print(f"Iniciando descarga desde: {DATASET_DOWNLOAD_URL}")
+    df = pd.read_csv(DATASET_DOWNLOAD_URL)
     print(f"Descarga completa: {len(df)} filas, {len(df.columns)} columnas")
     print(f"Columnas: {list(df.columns)}")
     df.to_csv(save_path, index=False)
@@ -56,6 +56,7 @@ def ml_pipeline():
     """
     import pandas as pd
     from airflow.operators.python import get_current_context
+    from ml_pipeline.config import TIPOEXTRACCION_MAP
 
     print(f"Leyendo CSV desde: {csv_path}")
     df = pd.read_csv(csv_path)
@@ -85,9 +86,10 @@ def ml_pipeline():
     # 2. Eliminamos filas con valores nulos para evitar errores en el modelo
     df = df.dropna()
 
-    # 3. Codificamos 'tipoextraccion' (texto) como enteros
-    #    Ejemplo: "CONVENCIONAL" -> 0, "NO CONVENCIONAL" -> 1, etc.
-    df['tipoextraccion'] = df['tipoextraccion'].astype('category').cat.codes
+    # 3. Codificamos 'tipoextraccion' con el mapa estatico de ml_pipeline.config
+    #    (reproducible entre corridas, a diferencia de .astype('category').cat.codes
+    #    que depende del orden en que aparecen los valores).
+    df['tipoextraccion'] = df['tipoextraccion'].map(TIPOEXTRACCION_MAP)
 
     print(f"Preprocesado completo: {len(df)} filas, columnas: {list(df.columns)}")
 
@@ -194,8 +196,8 @@ def ml_pipeline():
 
   # --- Secuencia de tasks ---
 
-  # 1. Descargamos el dataset
-  csv_path = download_dataset(DATASET_DOWNLOAD_URL, '/tmp/pozos.csv')
+  # 1. Descargamos el dataset (la URL vive en ml_pipeline.config)
+  csv_path = download_dataset('/tmp/pozos.csv')
 
   # 2. Preprocesamos los datos
   data = preprocess(csv_path)
