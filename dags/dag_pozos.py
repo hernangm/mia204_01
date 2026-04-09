@@ -8,7 +8,7 @@ DATASET_DOWNLOAD_URL = "http://datos.energia.gob.ar/dataset/c846e79c-026c-4040-8
 
 @dag(
     dag_id='ml_pipeline',
-    description='Pipeline de Machine Learning con Airflow',
+    description='Pipeline de Machine Learning con Airflow y MLflow',
     start_date=datetime(2025, 1, 1),
     schedule=None,
     catchup=False,
@@ -32,12 +32,7 @@ def ml_pipeline():
 
   @task
   def download_dataset(url, save_path):
-    """Descarga un dataset CSV desde una URL y lo guarda en disco.
-    Args: url (str) - URL de descarga, save_path (str) - ruta local del archivo.
-    Retorna: la ruta del archivo guardado.
-    """
-    # Importamos dentro de la funcion porque en Airflow cada task se ejecuta
-    # en su propio proceso; los imports de arriba del archivo son solo para Airflow.
+    """Descarga un dataset CSV desde una URL y lo guarda en disco."""
     import pandas as pd
     print(f"Iniciando descarga desde: {url}")
     df = pd.read_csv(url)
@@ -49,13 +44,24 @@ def ml_pipeline():
 
   @task
   def preprocess(csv_path):
-    """Lee el CSV, selecciona las columnas relevantes y codifica
-    la columna 'tipoextraccion' como enteros.
-    Args: csv_path (str) - ruta al archivo CSV.
-    Retorna: dict con nombres de columnas como claves y listas de valores.
-    """
+    """Lee el CSV, selecciona columnas relevantes y codifica 'tipoextraccion'
+    con un mapa estático para reproducibilidad."""
     import pandas as pd
     from airflow.operators.python import get_current_context
+
+    TIPOEXTRACCION_MAP = {
+        'Bombeo Hidráulico': 0,
+        'Bombeo Mecánico': 1,
+        'Cavidad Progresiva': 2,
+        'Electrosumergible': 3,
+        'Gas Lift': 4,
+        'Jet Pump': 5,
+        'Otros Tipos de Extracción': 6,
+        'Pistoneo (Swabbing)': 7,
+        'Plunger Lift': 8,
+        'Sin Sistema de Extracción': 9,
+        'Surgencia Natural': 10,
+    }
 
     print(f"Leyendo CSV desde: {csv_path}")
     df = pd.read_csv(csv_path)
@@ -78,119 +84,139 @@ def ml_pipeline():
     else:
       print("Sin filtro de fechas aplicado")
 
-    # 1. Seleccionamos solo las columnas relevantes para el modelo
-    columnas = ['tipoextraccion', 'prod_pet', 'prod_gas', 'prod_agua', 'tef']
+    # 1. Seleccionamos las columnas relevantes (incluye profundidad para los experimentos)
+    columnas = ['tipoextraccion', 'prod_pet', 'prod_gas', 'prod_agua', 'tef', 'profundidad']
     df = df[columnas]
 
-    # 2. Eliminamos filas con valores nulos para evitar errores en el modelo
+    # 2. Eliminamos filas con valores nulos
     df = df.dropna()
 
-    # 3. Codificamos 'tipoextraccion' (texto) como enteros
-    #    Ejemplo: "CONVENCIONAL" -> 0, "NO CONVENCIONAL" -> 1, etc.
-    df['tipoextraccion'] = df['tipoextraccion'].astype('category').cat.codes
+    # 3. Codificamos 'tipoextraccion' con mapa estático (reproducible entre corridas)
+    df['tipoextraccion'] = df['tipoextraccion'].map(TIPOEXTRACCION_MAP)
+    df = df.dropna(subset=['tipoextraccion'])
+    df['tipoextraccion'] = df['tipoextraccion'].astype(int)
 
     print(f"Preprocesado completo: {len(df)} filas, columnas: {list(df.columns)}")
 
-    # 4. Convertimos a dict de listas para que Airflow pueda
-    #    serializar el resultado como JSON (XCom)
     return df.to_dict(orient='list')
 
   @task
-  def train_model(data, target, features, model_path):
-    """Entrena un RandomForestRegressor para predecir el target indicado.
-    Guarda el modelo entrenado en la ruta especificada en formato pickle.
-    Args: data (dict) - dataset preprocesado, target (str) - columna a predecir,
-          features (list) - columnas de entrada, model_path (str) - ruta donde guardar el modelo.
-    Retorna: dict con metadata del modelo (target, features, ruta, etc.).
+  def train_model(data, experiment_config):
+    """Entrena un modelo según la configuración del experimento y registra
+    hiperparámetros, métricas y modelo en MLflow.
+
+    Args:
+        data (dict): dataset preprocesado (dict de listas).
+        experiment_config (dict): configuración del experimento con claves:
+            - model_type (str): tipo de modelo (ej. 'random_forest')
+            - model_params (dict): hiperparámetros del modelo
+            - target (str): columna objetivo
+            - features (list): columnas de entrada
     """
-    import pickle
-    import random
     import pandas as pd
+    import mlflow
+    import mlflow.sklearn
     from sklearn.ensemble import RandomForestRegressor
+    from sklearn.model_selection import train_test_split
+    from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
-    # 1. Reconstruimos el DataFrame a partir del dict que llego por XCom
+    MLFLOW_EXPERIMENT_NAME = "hydrocarbon_forecast"
+
+    # 1. Extraer configuración del experimento
+    model_type = experiment_config['model_type']
+    model_params = experiment_config['model_params']
+    target = experiment_config['target']
+    features = experiment_config['features']
+
+    # 2. Reconstruir DataFrame
     df = pd.DataFrame(data)
-
-    # 2. Separamos en X (features = entradas) e y (target = lo que queremos predecir)
     X = df[features]
     y = df[target]
-    print(f"Features (X): {features}")
-    print(f"Target (y): {target}")
 
-    # 3. Entrenamos el modelo
-    print("Entrenando RandomForestRegressor (n_estimators=100)...")
-    modelo = RandomForestRegressor(n_estimators=100, random_state=42)
-    modelo.fit(X, y)
-    print("Modelo entrenado exitosamente")
+    # 3. Split train/test para poder calcular métricas reales
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=model_params.get('random_state', 42)
+    )
 
-    # 4. Guardamos el modelo entrenado en disco con pickle
-    with open(model_path, 'wb') as f:
-      pickle.dump(modelo, f)
-    print(f"Modelo guardado en: {model_path}")
+    print(f"Experimento: model_type={model_type}, target={target}")
+    print(f"Features: {features}")
+    print(f"Params: {model_params}")
+    print(f"Train: {len(X_train)} filas, Test: {len(X_test)} filas")
 
-    # 5. Elegimos una muestra aleatoria para usar despues en prediccion
-    idx = random.randint(0, len(df) - 1)
-    muestra = X.iloc[idx].tolist()
-    print(f"Muestra aleatoria seleccionada (indice {idx}): {muestra}")
+    # 4. Configurar MLflow
+    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
 
-    # 6. Retornamos metadata (no el modelo, porque no es serializable a JSON)
+    # 5. Habilitar autologging de sklearn (registra params, métricas y modelo)
+    mlflow.sklearn.autolog()
+
+    # 6. Construir y entrenar el modelo dentro de un run de MLflow
+    if model_type == 'random_forest':
+      modelo = RandomForestRegressor(**model_params)
+    else:
+      raise ValueError(f"model_type no soportado: {model_type}")
+
+    # El autologger captura fit() automáticamente y crea un run
+    modelo.fit(X_train, y_train)
+
+    context = get_current_context()
+    params = context['params']
+    date_from = params.get('date_from')
+    date_to = params.get('date_to')
+
+    # 7. Loguear parámetros adicionales que el autologger no captura
+    mlflow.log_param('from', date_from)
+    mlflow.log_param('to', date_to)
+    mlflow.log_param('target', target)
+    mlflow.log_param('features', features)
+    mlflow.log_param('n_samples_train', len(X_train))
+    mlflow.log_param('n_samples_test', len(X_test))
+
+    # 8. Calcular y loguear métricas sobre el set de test
+    y_pred = modelo.predict(X_test)
+    mae = mean_absolute_error(y_test, y_pred)
+    mse = mean_squared_error(y_test, y_pred)
+    r2 = r2_score(y_test, y_pred)
+
+    mlflow.log_metric('test_mae', mae)
+    mlflow.log_metric('test_mse', mse)
+    mlflow.log_metric('test_r2', r2)
+
+    print(f"Métricas de test — MAE: {mae:.4f}, MSE: {mse:.4f}, R2: {r2:.4f}")
+
+    run_id = mlflow.active_run().info.run_id
+    print(f"MLflow run_id: {run_id}")
+
+    # 9. Finalizar el run (autolog lo deja abierto)
+    mlflow.end_run()
+
     return {
-      'target': target,
-      'features': features,
-      'model_path': model_path,
-      'n_samples': len(df),
-      'random_sample': muestra,
+        'model_type': model_type,
+        'target': target,
+        'features': features,
+        'model_params': model_params,
+        'test_mae': mae,
+        'test_mse': mse,
+        'test_r2': r2,
+        'mlflow_run_id': run_id,
+        'n_samples': len(df),
     }
 
   @task
-  def predict(model_info, sample):
-    """Carga un modelo entrenado desde disco y predice el valor del target.
-    Args: model_info (dict) - metadata del modelo incluyendo 'model_path',
-          sample (list) - dato de entrada para predecir.
-    Retorna: dict con model_info más 'sample' y 'prediction'.
-    """
-    import pickle
-
-    # 1. Cargamos el modelo guardado en disco (el inverso de pickle.dump)
-    print(f"Cargando modelo desde: {model_info['model_path']}")
-    with open(model_info['model_path'], 'rb') as f:
-      modelo = pickle.load(f)
-    print("Modelo cargado exitosamente")
-
-    # 2. Predecimos: el modelo espera una lista de muestras (2D),
-    #    por eso envolvemos sample en otra lista [sample]
-    print(f"Realizando prediccion para muestra: {sample}")
-    prediccion = modelo.predict([sample])[0]
-    print(f"Prediccion de '{model_info['target']}': {prediccion}")
-
-    # 3. Retornamos toda la info + la muestra y su prediccion
-    model_info['sample'] = sample
-    model_info['prediction'] = prediccion
-    return model_info
-
-  @task
   def show_results(results):
-    """Imprime un resumen de los resultados de predicción del modelo.
-    Args: results (dict) - contiene target, features, n_samples, random_sample, prediction.
-    """
-    print("=" * 50)
-    print("RESULTADOS DEL MODELO")
-    print("=" * 50)
+    """Imprime un resumen de los resultados de cada experimento."""
+    print("=" * 60)
+    print("RESULTADOS DEL EXPERIMENTO")
+    print("=" * 60)
+    print(f"Modelo:       {results['model_type']}")
+    print(f"Params:       {results['model_params']}")
     print(f"Target:       {results['target']}")
     print(f"Features:     {results['features']}")
     print(f"N muestras:   {results['n_samples']}")
-    print(f"Muestra:      {results['sample']}")
-    print(f"Prediccion:   {results['prediction']}")
-    print("=" * 50)
-
-  @task
-  def extract_sample(model_info):
-    """Extrae la muestra aleatoria de la metadata del modelo.
-    Necesario porque no se puede acceder a claves de un XCom reference
-    en la secuencia de tasks (solo se resuelve en tiempo de ejecucion).
-    """
-    print(f"Muestra extraida: {model_info['random_sample']}")
-    return model_info['random_sample']
+    print(f"Test MAE:     {results['test_mae']:.4f}")
+    print(f"Test MSE:     {results['test_mse']:.4f}")
+    print(f"Test R2:      {results['test_r2']:.4f}")
+    print(f"MLflow Run:   {results['mlflow_run_id']}")
+    print("=" * 60)
 
   # --- Secuencia de tasks ---
 
@@ -200,35 +226,27 @@ def ml_pipeline():
   # 2. Preprocesamos los datos
   data = preprocess(csv_path)
 
-  # 3. Entrenamos el modelo para predecir produccion de petroleo
-  features = ['tipoextraccion', 'prod_gas', 'prod_agua', 'tef']
-  model_info = train_model(data, 'prod_pet', features, '/tmp/modelo.pkl')
+  # 3. Entrenamos un modelo por cada experimento (dynamic task mapping)
+  #    Los experimentos se definen en config.py pero se replican aquí porque
+  #    el DAG-level code se parsea en el dag-processor que no tiene plugins en sys.path.
+  ALL_FEATURES_GAS = ['prod_pet', 'prod_agua', 'tef', 'profundidad', 'tipoextraccion']
+  REDUCED_FEATURES_GAS = ['prod_pet', 'tef', 'profundidad']
+  experiments = [
+      {'model_type': 'random_forest', 'model_params': {'n_estimators': 50,  'random_state': 204}, 'target': 'prod_gas', 'features': ALL_FEATURES_GAS},
+      {'model_type': 'random_forest', 'model_params': {'n_estimators': 100, 'random_state': 204}, 'target': 'prod_gas', 'features': ALL_FEATURES_GAS},
+      {'model_type': 'random_forest', 'model_params': {'n_estimators': 200, 'random_state': 204}, 'target': 'prod_gas', 'features': ALL_FEATURES_GAS},
+      {'model_type': 'random_forest', 'model_params': {'n_estimators': 100, 'random_state': 204}, 'target': 'prod_gas', 'features': REDUCED_FEATURES_GAS},
+  ]
 
-  # 4. Extraemos la muestra y predecimos
-  sample = extract_sample(model_info)
-  resultados = predict(model_info, sample)
+  experiment_results = train_model.expand(
+      data=[data],
+      experiment_config=experiments,
+  )
 
-  # 5. Mostramos resultados
-  show_results(resultados)
+  # 4. Mostramos resultados de cada experimento
+  show_results.expand(results=experiment_results)
 
-  # 6. El operador start va antes de todo
+  # 5. El operador start va antes de todo
   start >> csv_path
 
 ml_pipeline()
-
-"""
-Preguntas disparadoras
-
-Q: Supongamos que nuestro foco es la iteración. Diariamente entrenamos múltiples modelos. ¿Cómo haríamos para registrar y comparar las métricas que producen cada uno?
-A: Hoy los resultados solo se imprimen en los logs y se pierden. Habría que usar una herramienta que registre las métricas de cada corrida y permita compararlas visualmente.
-
-Q: Si cambiáramos el número de estimadores, ¿cómo sabríamos cuál dió mejor resultado? ¿en algún lugar tenemos registro de los hiperparametros usados en cada ejecución?
-A: No. El n_estimators=100 está hardcodeado y no queda asociado a ningún resultado. Se necesita un sistema que loguee parámetros y métricas juntos para saber qué configuración dio cada resultado.
-
-Q: El DAG guarda los modelos en archivos de formato pickle, pisando siempre la última versión. ¿Cómo podrías volver a una versión anterior del modelo si la nueva resultó ser peor?
-A: Lo ideal es usar un registro de modelos que los versione automáticamente y permita hacer rollback.
-
-Q: Supongamos que tuvimos un buen resultado en un entrenamiento, ¿tenemos toda la información necesaria para reproducirlo otra vez? ¿Cómo procedemos, si por el contrario, recibimos quejas respectos al comportamiento del modelo?
-A: Hoy no. El random no tiene seed fijo, no se guardan los params de fecha, el dataset puede cambiar y los hiperparámetros no se registran. Para reproducir un entrenamiento hay que trackear todos esos elementos.
-
-"""
