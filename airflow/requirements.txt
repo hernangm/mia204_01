@@ -3,3 +3,4 @@
 pandas~=2.2
 scikit-learn~=1.5
 mlflow~=3.10
+requests~=2.32

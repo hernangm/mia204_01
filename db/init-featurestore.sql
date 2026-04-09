@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS production (
     prod_gas FLOAT,
     prod_agua FLOAT,
     tef FLOAT,
-    tipoextraccion VARCHAR
+    tipoextraccion VARCHAR,
+    profundidad FLOAT
 );
 
 CREATE INDEX IF NOT EXISTS idx_prod_pozo_fecha ON production(idpozo, fecha);
@@ -46,7 +47,8 @@ CREATE TABLE IF NOT EXISTS features (
     prod_gas FLOAT,
     prod_agua FLOAT,
     tef FLOAT,
-    prod_pet FLOAT
+    prod_pet FLOAT,
+    profundidad FLOAT
 );
 
 CREATE INDEX IF NOT EXISTS idx_features_pozo_fecha ON features(id_pozo, fecha);
