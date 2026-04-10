@@ -36,7 +36,7 @@ Convención usada:
 
 - [x] Base URL /api/v1
 - [x] GET /wells
-- [x] GET /forecast
+- [x] GET /forecast (sirve predicciones del modelo `hydrocarbon_forecast@production` de MLflow sobre las features de cada `(id_well, fecha)`)
 
 ## Nota de alcance
 

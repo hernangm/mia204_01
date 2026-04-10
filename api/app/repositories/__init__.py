@@ -1,1 +1,1 @@
-"""Repository implementations for the API."""
+"""Implementaciones del patrón repository para la API."""

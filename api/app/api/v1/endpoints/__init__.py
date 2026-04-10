@@ -1,1 +1,1 @@
-"""Endpoint modules for version 1."""
+"""Módulos de endpoints para la versión 1 de la API."""

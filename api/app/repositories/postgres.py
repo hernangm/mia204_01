@@ -51,3 +51,39 @@ class PostgresWellRepository(WellRepository):
                 return [{"date": row.date, "prod": row.prod} for row in result]
         except SQLAlchemyError as exc:
             raise RuntimeError("Unable to fetch forecast data from PostgreSQL") from exc
+
+    def get_features(
+        self, id_well: str, date_start: date, date_end: date
+    ) -> list[dict[str, object]]:
+        try:
+            with self._engine.connect() as connection:
+                result = connection.execute(
+                    text(
+                        """
+                        SELECT fecha AS date,
+                               prod_pet,
+                               prod_agua,
+                               tef,
+                               profundidad,
+                               tipoextraccion
+                        FROM features
+                        WHERE id_pozo = :id_well
+                          AND fecha BETWEEN :date_start AND :date_end
+                        ORDER BY fecha
+                        """
+                    ),
+                    {"id_well": id_well, "date_start": date_start, "date_end": date_end},
+                )
+                return [
+                    {
+                        "date": row.date,
+                        "prod_pet": row.prod_pet,
+                        "prod_agua": row.prod_agua,
+                        "tef": row.tef,
+                        "profundidad": row.profundidad,
+                        "tipoextraccion": row.tipoextraccion,
+                    }
+                    for row in result
+                ]
+        except SQLAlchemyError as exc:
+            raise RuntimeError("Unable to fetch feature data from PostgreSQL") from exc

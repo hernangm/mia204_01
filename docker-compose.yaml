@@ -358,11 +358,19 @@ services:
       - ${ENV_FILE_PATH:-.env}
     environment:
       DATABASE_URL: postgresql+psycopg2://airflow:airflow@postgres:5432/featurestore
+      MLFLOW_TRACKING_URI: http://mlflow:9090
+    volumes:
+      # Mismo path de host que los servicios airflow + mlflow para que
+      # mlflow.pyfunc.load_model pueda leer los artefactos referenciados
+      # por el tracking server (que apuntan a /mlflow/mlruns/...).
+      - ./mlruns:/mlflow/mlruns
     ports:
       - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
+      mlflow:
+        condition: service_started
     healthcheck:
       test:
         - "CMD-SHELL"
@@ -380,11 +388,14 @@ services:
       - ${ENV_FILE_PATH:-.env}
     environment:
       DATABASE_URL: postgresql+psycopg2://airflow:airflow@postgres:5432/featurestore_test
+      MLFLOW_TRACKING_URI: http://mlflow:9090
     ports:
       - "8001:8000"
     depends_on:
       postgres:
         condition: service_healthy
+      mlflow:
+        condition: service_started
     healthcheck:
       test:
         - "CMD-SHELL"

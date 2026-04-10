@@ -1,1 +1,1 @@
-"""Core configuration and dependencies."""
+"""Configuración base y dependencies de la aplicación."""

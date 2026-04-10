@@ -30,13 +30,16 @@ def test_forecast_data_points_have_correct_fields(client):
 
 
 def test_forecast_filters_by_date_range(client):
+    # FakeModel devuelve prod_pet * 10; la fila fake de features para
+    # POZO-001 en 2023-11-01 tiene prod_pet=11.0, por lo tanto la
+    # predicción esperada es 110.0.
     response = client.get(
         "/api/v1/forecast",
         params={"id_well": "POZO-001", "date_start": "2023-11-01", "date_end": "2023-11-30"},
     )
 
     assert response.status_code == 200
-    assert response.json()["data"] == [{"date": "2023-11-01", "prod": 152.0}]
+    assert response.json()["data"] == [{"date": "2023-11-01", "prod": 110.0}]
 
 
 def test_forecast_empty_range_returns_empty_data(client):
@@ -84,10 +87,10 @@ def test_forecast_date_range_invalid_returns_422(client):
 
 
 def test_forecast_repository_failure_returns_503(client, fake_repository):
-    def failing_get_forecast(*args, **kwargs):
+    def failing_get_features(*args, **kwargs):
         raise RuntimeError("db unavailable")
 
-    fake_repository.get_forecast = failing_get_forecast
+    fake_repository.get_features = failing_get_features
 
     response = client.get(
         "/api/v1/forecast",
@@ -96,3 +99,18 @@ def test_forecast_repository_failure_returns_503(client, fake_repository):
 
     assert response.status_code == 503
     assert response.json()["detail"] == "Forecast backend is temporarily unavailable"
+
+
+def test_forecast_model_failure_returns_503(client, fake_model):
+    def failing_predict(*args, **kwargs):
+        raise RuntimeError("model unavailable")
+
+    fake_model.predict = failing_predict
+
+    response = client.get(
+        "/api/v1/forecast",
+        params={"id_well": "POZO-001", "date_start": "2023-10-01", "date_end": "2023-12-31"},
+    )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Forecast model is temporarily unavailable"
