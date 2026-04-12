@@ -15,7 +15,7 @@ class PostgresWellRepository(WellRepository):
         self._engine = create_engine(database_url, pool_pre_ping=True)
         self._forecast_measure = forecast_measure
 
-    def list_wells(self, date_query: date) -> list[str]:
+    def list_wells(self, date_query: date, limit: int = 100, offset: int = 0) -> list[str]:
         try:
             with self._engine.connect() as connection:
                 result = connection.execute(
@@ -25,9 +25,10 @@ class PostgresWellRepository(WellRepository):
                         FROM wells
                         WHERE fecha_data IS NULL OR fecha_data <= :date_query
                         ORDER BY idpozo
+                        LIMIT :limit OFFSET :offset
                         """
                     ),
-                    {"date_query": date_query},
+                    {"date_query": date_query, "limit": limit, "offset": offset},
                 )
                 return [row.idpozo for row in result]
         except SQLAlchemyError as exc:

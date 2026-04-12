@@ -9,7 +9,7 @@ Convención usada:
 ## Entrega Parcial
 
 - [x] Sistema dockerizado
-- [ ] API funcional (parcial: estructura y endpoints base listos, falta validación end-to-end con datos/modelo productivo)
+- [x] API funcional (endpoints con date format y examples en Swagger, modelo productivo cargado desde MLflow)
 - [x] Experiment tracking
 - [x] Logging de métricas
 - [x] Feature Store persistente
@@ -28,9 +28,9 @@ Convención usada:
 - [x] Docker & Docker Compose
 - [x] API REST (base)
 - [x] Feature Store
-- [ ] Model Registry (parcial: MLflow desplegado, falta evidencia de flujo de registro/promoción en producción)
+- [x] Model Registry (modelos registrados automáticamente, alias `production` asignado al mejor modelo por RMSE de test)
 - [x] Experiment Tracking
-- [ ] Orquestación (parcial: Airflow presente, falta automatización periódica de extremo a extremo)
+- [x] Orquestación (DAG `ml_pipeline` ejecuta pipeline completo: descarga → preprocesamiento → entrenamiento de 4 experimentos → promoción del mejor modelo)
 
 ## API especificada en README
 
@@ -40,5 +40,5 @@ Convención usada:
 
 ## Nota de alcance
 
-- Los puntos de "Entrega Final" permanecen abiertos porque requieren automatizaciones y monitoreo avanzados que aún no están implementados end-to-end.
-- Se desmarcaron ítems que estaban en estado parcial para que el checklist represente mejor el avance real.
+- La entrega parcial está completa: pipeline end-to-end funcional con MLflow integration (train/test split, feature importance, model signature, dataset logging, tags, promoción automática).
+- Los puntos de "Entrega Final" permanecen abiertos porque requieren automatizaciones (scheduling periódico) y monitoreo avanzados (drift, decay) que aún no están implementados.

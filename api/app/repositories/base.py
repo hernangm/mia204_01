@@ -4,7 +4,7 @@ from datetime import date
 
 class WellRepository(ABC):
     @abstractmethod
-    def list_wells(self, date_query: date) -> list[str]:
+    def list_wells(self, date_query: date, limit: int = 100, offset: int = 0) -> list[str]:
         raise NotImplementedError
 
     @abstractmethod

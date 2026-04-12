@@ -13,9 +13,9 @@ router = APIRouter(tags=["forecast"])
 
 @router.get("/forecast", response_model=ForecastResponse)
 def get_forecast(
-    id_well: str = Query(..., min_length=1, description="ID del pozo"),
-    date_start: date = Query(..., description="Fecha inicio del rango"),
-    date_end: date = Query(..., description="Fecha fin del rango"),
+    id_well: str = Query(..., min_length=1, description="ID del pozo", json_schema_extra={"example": "96688"}),
+    date_start: date = Query(..., description="Fecha inicio del rango", json_schema_extra={"example": "2023-01-01"}),
+    date_end: date = Query(..., description="Fecha fin del rango", json_schema_extra={"example": "2023-12-31"}),
     repository: WellRepository = Depends(get_repository),
     model=Depends(get_model),
 ) -> ForecastResponse:

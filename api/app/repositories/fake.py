@@ -56,9 +56,10 @@ class FakeWellRepository(WellRepository):
             },
         ]
 
-    def list_wells(self, date_query: date) -> list[str]:
+    def list_wells(self, date_query: date, limit: int = 100, offset: int = 0) -> list[str]:
         wells = [well["id_well"] for well in self._wells if well["date_data"] <= date_query]
-        return sorted(dict.fromkeys(wells))
+        wells = sorted(dict.fromkeys(wells))
+        return wells[offset:offset + limit]
 
     def get_forecast(self, id_well: str, date_start: date, date_end: date) -> list[dict[str, object]]:
         return [
