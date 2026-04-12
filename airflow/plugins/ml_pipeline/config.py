@@ -58,3 +58,23 @@ TIPOEXTRACCION_MAP = {
 # ---------- Orquestacion automatica ----------
 # Expresion cron para retraining periodico (primer dia de cada mes, 02:00 UTC).
 PIPELINE_SCHEDULE = "0 2 1 * *"
+
+# ---------- Deteccion de drift ----------
+# Umbral PSI: < 0.1 = sin drift, 0.1-0.2 = drift moderado, > 0.2 = drift severo.
+PSI_THRESHOLD = 0.2
+# Umbral p-value para test KS: si p < KS_PVALUE_THRESHOLD la distribucion cambio.
+KS_PVALUE_THRESHOLD = 0.05
+# Numero de bins para calcular PSI (estandar de industria: 10 o 20).
+PSI_BINS = 10
+# Degradacion de RMSE aceptable antes de considerar model decay (proporcion).
+MODEL_DECAY_RMSE_THRESHOLD = 0.15
+# Ventana de datos recientes para comparar distribuciones (en dias).
+DRIFT_WINDOW_DAYS = 90
+# Features continuas que se monitorizan para data drift.
+DRIFT_FEATURES = ['prod_pet', 'prod_agua', 'tef', 'profundidad']
+# Schedule del DAG de drift (todos los lunes a las 06:00 UTC).
+DRIFT_SCHEDULE = "0 6 * * 1"
+# Nombre del experimento MLflow para reportes de drift.
+DRIFT_EXPERIMENT_NAME = "drift_monitoring"
+# Tag en MLflow donde se guarda el RMSE baseline del modelo en produccion.
+MLFLOW_BASELINE_RMSE_TAG = "baseline_test_rmse"

@@ -192,6 +192,11 @@ def promote_best_model(results):
     if matching:
         version = matching[0].version
         client.set_registered_model_alias(model_name, "production", version)
+
+        # Guardar RMSE baseline para deteccion de model decay
+        from ml_pipeline.config import MLFLOW_BASELINE_RMSE_TAG
+        client.set_tag(best["run_id"], MLFLOW_BASELINE_RMSE_TAG, str(best["rmse"]))
+
         logger.info(
             "Modelo v%s (run %s, RMSE=%.4f) promovido como 'production'",
             version,
