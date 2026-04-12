@@ -351,6 +351,30 @@ services:
       --port 9090
       --allowed-hosts "*"
 
+  ray-serve:
+    build:
+      context: ./ray
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:9090
+    volumes:
+      - ./mlruns:/mlflow/mlruns
+    ports:
+      - "8265:8265"    # Ray dashboard
+    expose:
+      - "8001"         # Puerto interno de inferencia
+    depends_on:
+      mlflow:
+        condition: service_started
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8265').read()\" 2>/dev/null || exit 1"
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
+    restart: always
+
   api:
     build:
       context: ./api
@@ -359,6 +383,7 @@ services:
     environment:
       DATABASE_URL: postgresql+psycopg2://airflow:airflow@postgres:5432/featurestore
       MLFLOW_TRACKING_URI: http://mlflow:9090
+      RAY_SERVE_URL: http://ray-serve:8001
     volumes:
       # Mismo path de host que los servicios airflow + mlflow para que
       # mlflow.pyfunc.load_model pueda leer los artefactos referenciados
@@ -370,6 +395,8 @@ services:
       postgres:
         condition: service_healthy
       mlflow:
+        condition: service_started
+      ray-serve:
         condition: service_started
     healthcheck:
       test:

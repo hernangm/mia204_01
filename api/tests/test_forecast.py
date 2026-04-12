@@ -101,16 +101,27 @@ def test_forecast_repository_failure_returns_503(client, fake_repository):
     assert response.json()["detail"] == "Forecast backend is temporarily unavailable"
 
 
-def test_forecast_model_failure_returns_503(client, fake_model):
-    def failing_predict(*args, **kwargs):
-        raise RuntimeError("model unavailable")
+def test_forecast_ray_serve_failure_returns_503(fake_repository):
+    from unittest.mock import patch
 
-    fake_model.predict = failing_predict
+    import requests
 
-    response = client.get(
-        "/api/v1/forecast",
-        params={"id_well": "POZO-001", "date_start": "2023-10-01", "date_end": "2023-12-31"},
-    )
+    from app.core.dependencies import get_repository
+    from app.main import create_app
+
+    app = create_app()
+    app.dependency_overrides[get_repository] = lambda: fake_repository
+
+    def failing_post(*args, **kwargs):
+        raise requests.ConnectionError("ray-serve unavailable")
+
+    with patch("app.api.v1.endpoints.forecast.http_client.post", side_effect=failing_post):
+        from fastapi.testclient import TestClient
+        with TestClient(app) as test_client:
+            response = test_client.get(
+                "/api/v1/forecast",
+                params={"id_well": "POZO-001", "date_start": "2023-10-01", "date_end": "2023-12-31"},
+            )
 
     assert response.status_code == 503
-    assert response.json()["detail"] == "Forecast model is temporarily unavailable"
+    assert response.json()["detail"] == "Servicio de inferencia no disponible"

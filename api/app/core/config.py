@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     mlflow_tracking_uri: str = "http://mlflow:9090"
     mlflow_model_name: str = "hydrocarbon_forecast"
     mlflow_model_alias: str = "production"
+    ray_serve_url: str = "http://ray-serve:8001"
 
 
 @lru_cache(maxsize=1)
