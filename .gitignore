@@ -12,6 +12,8 @@ __pycache__/
 
 # Airflow runtime
 /logs/
+/config/
+/dags/
 
 # MLflow runtime (artifacts; backend store lives in Postgres)
 /mlruns/
