@@ -2,13 +2,14 @@ from datetime import datetime
 
 from airflow.sdk import Param, dag, task
 from airflow.providers.standard.operators.empty import EmptyOperator
+from ml_pipeline.config import PIPELINE_SCHEDULE
 
 
 @dag(
     dag_id='ml_pipeline',
     description='Pipeline de Machine Learning con Airflow',
     start_date=datetime(2025, 1, 1),
-    schedule=None,
+    schedule=PIPELINE_SCHEDULE,
     catchup=False,
     params={
         'date_from': Param(

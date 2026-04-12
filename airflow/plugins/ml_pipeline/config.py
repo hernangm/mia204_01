@@ -54,3 +54,7 @@ TIPOEXTRACCION_MAP = {
     'Sin Sistema de Extracción': 9,
     'Surgencia Natural': 10,
 }
+
+# ---------- Orquestacion automatica ----------
+# Expresion cron para retraining periodico (primer dia de cada mes, 02:00 UTC).
+PIPELINE_SCHEDULE = "0 2 1 * *"
