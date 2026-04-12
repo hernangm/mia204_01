@@ -14,7 +14,7 @@ import pandas as pd
 import requests
 from sqlalchemy import text
 
-from ml_pipeline.config import DATASET_DOWNLOAD_URL
+from ml_pipeline.config import DATASET_DOWNLOAD_URL, WELLS_DOWNLOAD_URL
 from ml_pipeline.db import get_engine
 
 log = logging.getLogger(__name__)
@@ -44,10 +44,19 @@ def download_if_missing() -> None:
         log.info("Using existing production CSV at %s", PRODUCTION_CSV)
 
     if not WELLS_CSV.exists():
-        raise RuntimeError(
-            f"{WELLS_CSV} not present and no download URL configured for the wells dataset."
-        )
-    log.info("Using existing wells CSV at %s", WELLS_CSV)
+        log.info("Wells CSV missing, streaming download from %s", WELLS_DOWNLOAD_URL)
+        try:
+            with requests.get(WELLS_DOWNLOAD_URL, stream=True, timeout=300) as response:
+                response.raise_for_status()
+                with open(WELLS_CSV, "wb") as fh:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            fh.write(chunk)
+            log.info("Downloaded wells CSV to %s", WELLS_CSV)
+        except requests.RequestException as exc:
+            raise RuntimeError(f"Failed to download wells CSV: {exc}") from exc
+    else:
+        log.info("Using existing wells CSV at %s", WELLS_CSV)
 
 
 def _load_production(engine) -> int:
