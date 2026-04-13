@@ -1,6 +1,13 @@
 # ml_pipeline/config.py — fuente única de verdad para constantes del pipeline
 
 # ---------------------------------------------------------------------------
+# Modo desarrollo
+# ---------------------------------------------------------------------------
+# Limitar filas durante pruebas para acelerar el pipeline.
+# Poner None para usar todos los datos.
+DEV_ROW_LIMIT = None  # ej: 20_000
+
+# ---------------------------------------------------------------------------
 # URLs de descarga de datasets públicos (datos.gob.ar)
 # Se usan como fallback si los CSVs no están presentes en data/raw/.
 # ---------------------------------------------------------------------------

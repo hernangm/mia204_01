@@ -4,7 +4,8 @@ Reads from /opt/airflow/data/raw (host bind-mount of ./data/raw). If the
 production CSV is missing, falls back to streaming-download from the public
 gob.ar URL defined in ml_pipeline.config.
 
-Idempotent: TRUNCATEs production and wells before reloading.
+Idempotent: TRUNCATEs production and wells before reloading, a menos que
+la tabla ya tenga datos y force=False (modo skip para desarrollo rápido).
 """
 
 import logging
@@ -14,7 +15,7 @@ import pandas as pd
 import requests
 from sqlalchemy import text
 
-from ml_pipeline.config import DATASET_DOWNLOAD_URL, WELLS_DOWNLOAD_URL
+from ml_pipeline.config import DATASET_DOWNLOAD_URL, DEV_ROW_LIMIT, WELLS_DOWNLOAD_URL
 from ml_pipeline.db import get_engine
 
 log = logging.getLogger(__name__)
@@ -59,10 +60,16 @@ def download_if_missing() -> None:
         log.info("Using existing wells CSV at %s", WELLS_CSV)
 
 
+def _table_row_count(engine, table: str) -> int:
+    """Retorna la cantidad de filas de una tabla."""
+    with engine.connect() as conn:
+        return conn.execute(text(f"SELECT COUNT(*) FROM {table}")).scalar()
+
+
 def _load_production(engine) -> int:
-    log.info("Reading %s", PRODUCTION_CSV)
+    log.info("Reading %s (DEV_ROW_LIMIT=%s)", PRODUCTION_CSV, DEV_ROW_LIMIT)
     try:
-        df = pd.read_csv(PRODUCTION_CSV)
+        df = pd.read_csv(PRODUCTION_CSV, nrows=DEV_ROW_LIMIT)
     except Exception as exc:
         raise RuntimeError(f"Failed to read production CSV: {exc}") from exc
 
@@ -129,10 +136,25 @@ def _load_wells(engine) -> int:
     return len(subset)
 
 
-def ingest() -> dict:
-    """Truncate production + wells and reload from the raw CSVs."""
+def ingest(force: bool = False) -> dict:
+    """Carga production + wells desde los CSVs crudos.
+
+    Si force=False y la tabla production ya tiene filas, la carga se saltea
+    para ahorrar tiempo en iteraciones de desarrollo. Pasar force=True (vía
+    dag_run.conf: {"force_ingest": true}) para forzar la recarga completa.
+    """
     download_if_missing()
     engine = get_engine()
+
+    if not force:
+        existing = _table_row_count(engine, "production")
+        if existing > 0:
+            log.info(
+                "Tabla production ya tiene %d filas. Saltando ingest. "
+                "Usar force_ingest=true en dag_run.conf para forzar recarga.",
+                existing,
+            )
+            return {"production_rows": existing, "wells_rows": 0, "skipped": True}
 
     with engine.begin() as conn:
         conn.execute(text("TRUNCATE TABLE production RESTART IDENTITY"))
