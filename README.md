@@ -1,14 +1,14 @@
 # Trabajo Integrador — IA en Producción
 
 Pipeline de ML Engineering para pronóstico de producción de hidrocarburos.
-El foco está en **reproducibilidad, trazabilidad y automatización**, no en maximizar la precisión del modelo.
+Tal como dice la consigna: El foco está en **reproducibilidad, trazabilidad y automatización**, no en maximizar la precisión del modelo.
 
 ## Servicios
 
 | Servicio | URL | Credenciales |
 |---|---|---|
 | API REST | http://localhost:8000 | — |
-| Swagger UI | http://localhost:8000/docs | — |
+| Swagger UI (API a mano) | http://localhost:8000/docs | — |
 | Airflow | http://localhost:8080 | airflow / airflow |
 | MLflow | http://localhost:9090 | — |
 | PostgreSQL | localhost:5432 | airflow / airflow |
