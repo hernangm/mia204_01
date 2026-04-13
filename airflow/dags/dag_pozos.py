@@ -11,6 +11,11 @@ Pipeline stages:
   2. build_features     — derive the features table from production
   3. train_model[0..N]  — dynamically mapped over EXPERIMENTS, each logs to MLflow
   4. promote_best       — assigns the 'production' alias to the lowest-rmse model
+
+Configuración via dag_run.conf (trigger con JSON):
+  force_ingest (bool): fuerza recarga de CSVs aunque production ya tenga datos
+  force_build  (bool): fuerza regeneración de features aunque ya existan
+  Ejemplo: {"force_ingest": true, "force_build": true}
 """
 
 from datetime import datetime
@@ -30,16 +35,22 @@ def ml_pipeline():
 
     @task
     def ingest_csvs() -> dict:
+        from airflow.operators.python import get_current_context
         from ml_pipeline.data_ingestion import ingest
 
-        return ingest()
+        conf = get_current_context()["dag_run"].conf or {}
+        force = bool(conf.get("force_ingest", False))
+        return ingest(force=force)
 
     @task
     def build_features(_upstream: dict) -> dict:
         # _upstream gates this task on ingest_csvs without using the data.
+        from airflow.operators.python import get_current_context
         from ml_pipeline.feature_engineering import build
 
-        return build()
+        conf = get_current_context()["dag_run"].conf or {}
+        force = bool(conf.get("force_build", False))
+        return build(force=force)
 
     @task
     def list_experiments(_upstream: dict) -> list[dict]:
