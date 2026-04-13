@@ -3,9 +3,9 @@ from collections.abc import Generator
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.dependencies import get_repository
 from app.main import create_app
-from app.repositories.fake import FakeWellRepository
+from app.repository import FakeWellRepository
+from app.routes import get_repository
 
 
 @pytest.fixture()
