@@ -33,9 +33,18 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 
-# Agrega airflow/plugins al path para poder importar ml_pipeline
+# Agrega airflow/plugins al path para poder importar ml_pipeline.
+# La ruta difiere según el entorno:
+#   - Host:      <repo>/airflow/plugins
+#   - Container: /opt/airflow/plugins  (bind mount; parent del script ya es /opt/airflow)
 _REPO_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(_REPO_ROOT / "airflow" / "plugins"))
+for _plugins_candidate in (
+    _REPO_ROOT / "airflow" / "plugins",  # ejecución desde el host
+    _REPO_ROOT / "plugins",              # ejecución dentro del container
+):
+    if _plugins_candidate.exists():
+        sys.path.insert(0, str(_plugins_candidate))
+        break
 
 from ml_pipeline.config import EXPERIMENTS, MLFLOW_EXPERIMENT_NAME  # noqa: E402
 from ml_pipeline.db import get_engine  # noqa: E402
