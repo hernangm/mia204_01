@@ -13,3 +13,5 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg2://airflow:airflow@postgres:5432/featurestore"
     # Métrica de producción que devuelve /forecast (prod_gas | prod_pet | prod_agua | tef)
     forecast_measure: str = "prod_gas"
+    # TTL del cache de /wells en segundos (0 deshabilita el cache)
+    wells_cache_ttl_seconds: int = 300

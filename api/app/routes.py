@@ -5,6 +5,7 @@ El prefijo /api/v1 se agrega en main.py al montar el router.
 """
 
 from datetime import date
+from functools import lru_cache
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
@@ -15,23 +16,33 @@ from app.schemas import ForecastPoint, ForecastResponse, WellItem
 router = APIRouter()
 
 
+# El repositorio se cachea para que el TTL-cache interno de list_wells
+# (y el pool del engine SQLAlchemy) sobrevivan entre requests.
+@lru_cache(maxsize=1)
 def get_repository() -> WellRepository:
     """Dependency injection: devuelve el repositorio de producción configurado."""
     settings = Settings()
     return PostgresWellRepository(
         database_url=settings.database_url,
         forecast_measure=settings.forecast_measure,
+        wells_cache_ttl_seconds=settings.wells_cache_ttl_seconds,
     )
 
 
 @router.get("/wells", response_model=list[WellItem], tags=["wells"])
 def list_wells(
-    date_query: date = Query(..., description="Fecha de consulta (YYYY-MM-DD)"),
+    date_query: date = Query(
+        ...,
+        description="Fecha de consulta (YYYY-MM-DD)",
+        json_schema_extra={"example": "2023-01-01"},
+    ),
+    limit: int = Query(100, ge=1, le=1000, description="Cantidad máxima de resultados"),
+    offset: int = Query(0, ge=0, description="Resultados a omitir (paginación)"),
     repo: WellRepository = Depends(get_repository),
 ) -> list[WellItem]:
     """Lista todos los pozos disponibles para una fecha de consulta."""
     try:
-        wells = repo.list_wells(date_query)
+        wells = repo.list_wells(date_query, limit=limit, offset=offset)
     except RuntimeError as exc:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -42,9 +53,22 @@ def list_wells(
 
 @router.get("/forecast", response_model=ForecastResponse, tags=["forecast"])
 def get_forecast(
-    id_well: str = Query(..., min_length=1, description="ID del pozo"),
-    date_start: date = Query(..., description="Fecha inicio del rango (YYYY-MM-DD)"),
-    date_end: date = Query(..., description="Fecha fin del rango (YYYY-MM-DD)"),
+    id_well: str = Query(
+        ...,
+        min_length=1,
+        description="ID del pozo",
+        json_schema_extra={"example": "96688"},
+    ),
+    date_start: date = Query(
+        ...,
+        description="Fecha inicio del rango (YYYY-MM-DD)",
+        json_schema_extra={"example": "2023-01-01"},
+    ),
+    date_end: date = Query(
+        ...,
+        description="Fecha fin del rango (YYYY-MM-DD)",
+        json_schema_extra={"example": "2023-12-31"},
+    ),
     repo: WellRepository = Depends(get_repository),
 ) -> ForecastResponse:
     """Devuelve la serie de producción histórica para un pozo en un rango de fechas."""

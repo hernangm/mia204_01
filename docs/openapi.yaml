@@ -6,10 +6,23 @@ info:
 servers:
   - url: http://localhost:8000
 paths:
+  /health:
+    get:
+      summary: Healthcheck del servicio
+      operationId: health
+      tags: [health]
+      responses:
+        '200':
+          description: Servicio operativo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
   /api/v1/wells:
     get:
       summary: Listado de pozos disponibles
       operationId: listWells
+      tags: [wells]
       parameters:
         - name: date_query
           in: query
@@ -17,7 +30,8 @@ paths:
           schema:
             type: string
             format: date
-          description: Fecha de consulta
+            example: "2023-01-01"
+          description: Fecha de consulta (YYYY-MM-DD)
       responses:
         '200':
           description: Lista de pozos
@@ -35,6 +49,7 @@ paths:
     get:
       summary: Pronóstico de producción por pozo
       operationId: getForecast
+      tags: [forecast]
       parameters:
         - name: id_well
           in: query
@@ -42,6 +57,7 @@ paths:
           schema:
             type: string
             minLength: 1
+            example: "96688"
           description: ID del pozo
         - name: date_start
           in: query
@@ -49,14 +65,16 @@ paths:
           schema:
             type: string
             format: date
-          description: Fecha inicio del rango
+            example: "2023-01-01"
+          description: Fecha inicio del rango (YYYY-MM-DD)
         - name: date_end
           in: query
           required: true
           schema:
             type: string
             format: date
-          description: Fecha fin del rango
+            example: "2023-12-31"
+          description: Fecha fin del rango (YYYY-MM-DD)
       responses:
         '200':
           description: Pronóstico para el pozo en el rango solicitado
@@ -70,6 +88,14 @@ paths:
           description: Backend temporalmente no disponible
 components:
   schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          example: ok
     WellItem:
       type: object
       required:
