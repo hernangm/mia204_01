@@ -173,3 +173,6 @@ Los datos se descargan automáticamente desde [datos.gob.ar](https://datos.gob.a
 
 - `produccin-de-pozos-de-gas-y-petrleo-no-convencional.csv` — producción mensual por pozo
 - `capitulo-iv-pozos.csv` — metadatos de pozos (empresa, provincia, cuenca)
+
+## Video explicativo
+[![Ver video](https://img.youtube.com/vi/brF-glIGJtg/0.jpg)](https://youtu.be/brF-glIGJtg)
