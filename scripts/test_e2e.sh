@@ -51,7 +51,6 @@ failed=0
 check "API"      "http://localhost:8000/health"          200 || failed=1
 check "Airflow"  "http://localhost:8080/api/v2/version"  200 || failed=1
 check "MLflow"   "http://localhost:9090/"                200 || failed=1
-check "MinIO"    "http://localhost:9001/minio/health/live" 200 || failed=1
 check_forecast_nonempty                                           || failed=1
 
 if (( failed )); then

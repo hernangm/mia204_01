@@ -13,28 +13,33 @@ ALL_FEATURES_GAS = ['prod_pet', 'prod_agua', 'tef', 'profundidad', 'tipoextracci
 REDUCED_FEATURES_GAS = ['prod_pet', 'tef', 'profundidad']
 
 # ---------- Experiments to run ----------
+# Nota: acotamos max_depth para que el pickle del RandomForest pese MB en vez de GB.
+# Sin max_depth, sobre ~400K filas los modelos llegaban a 5GB y saturaban el
+# artifact proxy de MLflow al subirlos (CPU 100%, upload eterno). El foco del TP
+# es ML Engineering, no la precision del modelo, asi que arboles acotados alcanzan.
+# n_jobs=-1 paraleliza el entrenamiento sobre todos los cores disponibles.
 EXPERIMENTS = [
     {
         'model_type': 'random_forest',
-        'model_params': {'n_estimators': 50, 'random_state': 204},
+        'model_params': {'n_estimators': 50, 'max_depth': 10, 'n_jobs': -1, 'random_state': 204},
         'target': 'prod_gas',
         'features': ALL_FEATURES_GAS,
     },
     {
         'model_type': 'random_forest',
-        'model_params': {'n_estimators': 100, 'random_state': 204},
+        'model_params': {'n_estimators': 100, 'max_depth': 12, 'n_jobs': -1, 'random_state': 204},
         'target': 'prod_gas',
         'features': ALL_FEATURES_GAS,
     },
     {
         'model_type': 'random_forest',
-        'model_params': {'n_estimators': 200, 'random_state': 204},
+        'model_params': {'n_estimators': 150, 'max_depth': 15, 'n_jobs': -1, 'random_state': 204},
         'target': 'prod_gas',
         'features': ALL_FEATURES_GAS,
     },
     {
         'model_type': 'random_forest',
-        'model_params': {'n_estimators': 100, 'random_state': 204},
+        'model_params': {'n_estimators': 100, 'max_depth': 12, 'n_jobs': -1, 'random_state': 204},
         'target': 'prod_gas',
         'features': REDUCED_FEATURES_GAS,
     },
