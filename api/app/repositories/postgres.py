@@ -1,3 +1,5 @@
+import threading
+import time
 from datetime import date
 
 from sqlalchemy import create_engine, text
@@ -7,15 +9,29 @@ from app.repositories.base import WellRepository
 
 
 class PostgresWellRepository(WellRepository):
-    def __init__(self, database_url: str, forecast_measure: str = "prod_gas") -> None:
+    def __init__(
+        self,
+        database_url: str,
+        forecast_measure: str = "prod_gas",
+        wells_cache_ttl_seconds: int = 300,
+    ) -> None:
         allowed_measures = {"prod_gas", "prod_pet", "prod_agua", "tef"}
         if forecast_measure not in allowed_measures:
             raise ValueError(f"Unsupported forecast measure: {forecast_measure}")
 
         self._engine = create_engine(database_url, pool_pre_ping=True)
         self._forecast_measure = forecast_measure
+        self._wells_cache_ttl = wells_cache_ttl_seconds
+        self._wells_cache: dict[tuple[date, int, int], tuple[float, list[str]]] = {}
+        self._wells_cache_lock = threading.Lock()
 
     def list_wells(self, date_query: date, limit: int = 100, offset: int = 0) -> list[str]:
+        cache_key = (date_query, limit, offset)
+        if self._wells_cache_ttl > 0:
+            with self._wells_cache_lock:
+                hit = self._wells_cache.get(cache_key)
+                if hit is not None and time.monotonic() - hit[0] < self._wells_cache_ttl:
+                    return hit[1]
         try:
             with self._engine.connect() as connection:
                 result = connection.execute(
@@ -30,9 +46,13 @@ class PostgresWellRepository(WellRepository):
                     ),
                     {"date_query": date_query, "limit": limit, "offset": offset},
                 )
-                return [row.idpozo for row in result]
+                wells = [row.idpozo for row in result]
         except SQLAlchemyError as exc:
             raise RuntimeError("Unable to fetch wells from PostgreSQL") from exc
+        if self._wells_cache_ttl > 0:
+            with self._wells_cache_lock:
+                self._wells_cache[cache_key] = (time.monotonic(), wells)
+        return wells
 
     def get_forecast(self, id_well: str, date_start: date, date_end: date) -> list[dict[str, object]]:
         try:

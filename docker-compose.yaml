@@ -71,6 +71,10 @@ x-airflow-common:
     # The following line can be used to set a custom config file, stored in the local config folder
     AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
     MLFLOW_TRACKING_URI: 'http://mlflow:9090'
+    FEATURESTORE_DB_URL: '${FEATURESTORE_DB_URL}'
+    AIRFLOW_API_URL: '${AIRFLOW_API_URL}'
+    AIRFLOW_API_USER: '${AIRFLOW_API_USER}'
+    AIRFLOW_API_PASSWORD: '${AIRFLOW_API_PASSWORD}'
   volumes:
     - ${AIRFLOW_PROJ_DIR:-.}/airflow/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
@@ -92,6 +96,8 @@ services:
       POSTGRES_USER: airflow
       POSTGRES_PASSWORD: airflow
       POSTGRES_DB: airflow
+    ports:
+      - "5432:5432"
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
       # Init scripts run automatically on first start of a fresh volume (alphabetical order).

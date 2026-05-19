@@ -56,6 +56,7 @@ def drift_report():
             str: ruta al CSV de datos recientes.
         """
         import logging
+        import os
         from datetime import timedelta
 
         import pandas as pd
@@ -63,7 +64,12 @@ def drift_report():
         from ml_pipeline.config import DRIFT_WINDOW_DAYS
 
         logger = logging.getLogger(__name__)
-        db_url = "postgresql+psycopg2://airflow:airflow@postgres:5432/featurestore"
+        db_url = os.environ.get("FEATURESTORE_DB_URL")
+        if not db_url:
+            raise RuntimeError(
+                "FEATURESTORE_DB_URL no esta definida en el entorno. "
+                "Configurarla en .env y propagarla via docker-compose."
+            )
         engine = create_engine(db_url)
 
         fecha_limite = (datetime.utcnow() - timedelta(days=DRIFT_WINDOW_DAYS)).strftime('%Y-%m-%d')
@@ -277,12 +283,25 @@ def drift_report():
             )
 
             # Disparar retraining via API REST de Airflow
+            import os
             import requests
+
+            api_url = os.environ.get(
+                "AIRFLOW_API_URL",
+                "http://airflow-apiserver:8080/api/v2",
+            )
+            api_user = os.environ.get("AIRFLOW_API_USER")
+            api_password = os.environ.get("AIRFLOW_API_PASSWORD")
+            if not api_user or not api_password:
+                raise RuntimeError(
+                    "AIRFLOW_API_USER / AIRFLOW_API_PASSWORD no estan definidos. "
+                    "Configurarlos en .env para permitir disparar retraining."
+                )
             try:
                 resp = requests.post(
-                    "http://airflow-apiserver:8080/api/v2/dags/ml_pipeline/dagRuns",
+                    f"{api_url}/dags/ml_pipeline/dagRuns",
                     json={"logical_date": None, "conf": {"triggered_by": "drift_report"}},
-                    auth=("airflow", "airflow"),
+                    auth=(api_user, api_password),
                     timeout=30,
                 )
                 resp.raise_for_status()

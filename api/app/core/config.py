@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     api_v1_prefix: str = "/api/v1"
     database_url: str = "postgresql+psycopg2://airflow:airflow@postgres:5432/featurestore"
     forecast_measure: str = "prod_gas"
+    wells_cache_ttl_seconds: int = 300
     mlflow_tracking_uri: str = "http://mlflow:9090"
     mlflow_model_name: str = "hydrocarbon_forecast"
     mlflow_model_alias: str = "production"

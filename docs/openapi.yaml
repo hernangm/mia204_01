@@ -6,10 +6,23 @@ info:
 servers:
   - url: http://localhost:8000
 paths:
+  /health:
+    get:
+      summary: Healthcheck del servicio
+      operationId: health
+      tags: [health]
+      responses:
+        '200':
+          description: Servicio operativo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
   /api/v1/wells:
     get:
       summary: Listado de pozos disponibles
       operationId: listWells
+      tags: [wells]
       parameters:
         - name: date_query
           in: query
@@ -53,6 +66,7 @@ paths:
     get:
       summary: Pronóstico de producción por pozo
       operationId: getForecast
+      tags: [forecast]
       parameters:
         - name: id_well
           in: query
@@ -91,6 +105,14 @@ paths:
           description: Backend temporalmente no disponible
 components:
   schemas:
+    HealthResponse:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          example: ok
     WellItem:
       type: object
       required:
