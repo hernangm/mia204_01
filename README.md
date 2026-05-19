@@ -173,24 +173,35 @@ docker-compose up --build
 
 ### 📅 Entrega Parcial
 
-- [ ] Sistema dockerizado
-- [ ] API funcional
-- [ ] Experiment tracking
-- [ ] Logging de métricas
-- [ ] Feature Store persistente
-- [ ] Training reproducible
+- [x] Sistema dockerizado
+- [x] API funcional conforme OpenAPI
+- [x] Experiment tracking (MLflow + alias `production`)
+- [x] Logging de métricas y artefactos
+- [x] Feature Store persistente (DAG `ml_pipeline` puebla `featurestore.features`)
+- [x] Training reproducible (`airflow dags trigger ml_pipeline` con params `date_from`/`date_to`)
 
 ---
 
 ### 📅 Entrega Final
 
-- [ ] Orquestación automática
-- [ ] Retraining periódico
-- [ ] Model decay
-- [ ] Data drift / concept drift
-- [ ] Infraestructura escalable
+- [x] Orquestación automática (DAG `ml_pipeline` con schedule `0 2 1 * *`)
+- [x] Retraining periódico (mensual + auto-trigger desde `drift_report` ante drift/decay)
+- [x] Model decay (RMSE-degradation contra baseline taggeado en MLflow)
+- [x] Data drift / concept drift (PSI + KS test, reporte semanal en MLflow `drift_monitoring`)
+- [x] Infraestructura escalable (Ray Serve, 2 réplicas, FastAPI proxy)
+
+Ver [docs/checklist_implementacion.md](docs/checklist_implementacion.md) para los punteros a archivos y líneas que respaldan cada ítem.
 
 ---
+
+## 👥 Equipo y contribuciones
+
+Trabajo desarrollado por:
+
+- **Hernan** ([hernangm](https://github.com/hernangm)) — pipeline Airflow (`ml_pipeline`, `drift_report`), feature store en PostgreSQL, integración MLflow + alias `production`, deploy de Ray Serve.
+- **Matias** ([matiascaccia](https://github.com/matiascaccia)) — docker-compose & redes entre servicios, API FastAPI (`/wells`, `/forecast`, `/health`), repositorios SQLAlchemy y suite de tests.
+
+La historia de commits y PRs refleja el reparto de tareas entre ambos integrantes.
 
 ## 🤝 Collaboration Guidelines
 

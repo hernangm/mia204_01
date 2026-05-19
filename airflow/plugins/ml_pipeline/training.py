@@ -20,12 +20,14 @@ def _feature_set_tag(features):
     return "custom"
 
 
-def train_and_log(data_dict, experiment_cfg):
+def train_and_log(data_dict, experiment_cfg, feature_store_meta=None):
     """Entrena un modelo y registra todo en MLflow.
 
     Args:
-        data_dict: dict de listas (dataset preprocesado, serializable JSON).
+        data_dict: dict de listas (dataset leido del feature store).
         experiment_cfg: dict con claves model_type, model_params, target, features.
+        feature_store_meta: dict con rows/date_from/date_to del feature store.
+            Si esta presente se taggea data_source=featurestore en el run.
 
     Returns:
         dict con run_id, rmse, mae, r2.
@@ -66,6 +68,13 @@ def train_and_log(data_dict, experiment_cfg):
         # --- Tags ---
         mlflow.set_tag("feature_set", _feature_set_tag(features))
         mlflow.set_tag("model_type", experiment_cfg.get("model_type", "random_forest"))
+
+        # Audit del origen de los datos: cumple Req #3 del SPEC (data_source=featurestore).
+        if feature_store_meta is not None:
+            mlflow.set_tag("data_source", "featurestore")
+            mlflow.log_param("feature_store_rows", int(feature_store_meta.get("rows", 0)))
+            mlflow.log_param("feature_store_date_from", str(feature_store_meta.get("date_from", "all")))
+            mlflow.log_param("feature_store_date_to", str(feature_store_meta.get("date_to", "all")))
 
         # --- Dataset ---
         dataset = mlflow.data.from_pandas(
