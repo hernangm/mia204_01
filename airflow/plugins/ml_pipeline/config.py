@@ -1,9 +1,19 @@
 # ml_pipeline/config.py — single source of truth for pipeline constants
 
+# Limitar filas durante pruebas para acelerar el pipeline. None = todos los datos.
+DEV_ROW_LIMIT = None
+
+# Producción mensual por pozo (no convencional)
 DATASET_DOWNLOAD_URL = (
     "http://datos.energia.gob.ar/dataset/c846e79c-026c-4040-897f-1ad3543b407c"
     "/resource/b5b58cdc-9e07-41f9-b392-fb9ec68b0725/download/"
     "produccin-de-pozos-de-gas-y-petrleo-no-convencional.csv"
+)
+
+# Listado de pozos con metadatos (empresa, provincia, cuenca, etc.)
+WELLS_DOWNLOAD_URL = (
+    "http://datos.energia.gob.ar/dataset/c846e79c-026c-4040-897f-1ad3543b407c"
+    "/resource/cb5c0f04-7835-45cd-b982-3e25ca7d7751/download/capitulo-iv-pozos.csv"
 )
 
 MLFLOW_EXPERIMENT_NAME = "hydrocarbon_forecast"

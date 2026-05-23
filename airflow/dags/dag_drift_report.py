@@ -23,60 +23,70 @@ def drift_report():
 
     @task
     def cargar_datos_referencia():
-        """Descarga el dataset completo de referencia y lo guarda en /tmp.
+        """Carga el histórico completo del Feature Store como distribución de referencia.
 
-        Usa la misma URL que el pipeline de entrenamiento para obtener la
-        distribucion historica completa de las features.
+        Usa el Feature Store en lugar de descargar el CSV original para garantizar
+        consistencia: la referencia es exactamente lo que vio el modelo al entrenar.
 
         Returns:
-            str: ruta al CSV de referencia.
+            str: ruta al CSV de referencia guardado en /tmp.
         """
         import logging
 
-        import pandas as pd
-        from ml_pipeline.config import DATASET_DOWNLOAD_URL
+        from ml_pipeline.feature_store import FeatureStore
 
         logger = logging.getLogger(__name__)
-        logger.info("Descargando dataset de referencia desde: %s", DATASET_DOWNLOAD_URL)
+        logger.info("Cargando datos de referencia desde el Feature Store")
 
-        df = pd.read_csv(DATASET_DOWNLOAD_URL)
+        fs = FeatureStore()
+        df = fs.get_training_features()
+
+        if df.empty:
+            raise RuntimeError(
+                "El Feature Store está vacío. Ejecutar el pipeline de entrenamiento "
+                "al menos una vez antes de correr el DAG de drift."
+            )
+
         path = '/tmp/drift_referencia.csv'
         df.to_csv(path, index=False)
-        logger.info("Dataset de referencia guardado: %d filas en %s", len(df), path)
+        logger.info("Referencia guardada: %d filas en %s", len(df), path)
         return path
 
     @task
     def cargar_datos_recientes():
-        """Consulta el feature store para obtener datos de los ultimos N dias.
+        """Consulta el Feature Store para obtener datos de los últimos N días.
 
-        Filtra la tabla features por la ventana temporal definida en
-        DRIFT_WINDOW_DAYS para usarla como distribucion 'actual'.
+        Usa DRIFT_WINDOW_DAYS como ventana temporal. Estos datos representan
+        la distribución 'actual' a comparar contra la referencia histórica.
 
         Returns:
-            str: ruta al CSV de datos recientes.
+            str: ruta al CSV de datos recientes guardado en /tmp.
         """
         import logging
-        import os
         from datetime import timedelta
 
         import pandas as pd
-        from sqlalchemy import create_engine, text
+        from sqlalchemy import text
         from ml_pipeline.config import DRIFT_WINDOW_DAYS
+        from ml_pipeline.db import get_engine
 
         logger = logging.getLogger(__name__)
-        db_url = os.environ.get("FEATURESTORE_DB_URL")
-        if not db_url:
-            raise RuntimeError(
-                "FEATURESTORE_DB_URL no esta definida en el entorno. "
-                "Configurarla en .env y propagarla via docker-compose."
-            )
-        engine = create_engine(db_url)
 
         fecha_limite = (datetime.utcnow() - timedelta(days=DRIFT_WINDOW_DAYS)).strftime('%Y-%m-%d')
-        query = text("SELECT * FROM features WHERE fecha >= :fecha_limite")
+        logger.info("Consultando Feature Store desde %s (ventana %d días)", fecha_limite, DRIFT_WINDOW_DAYS)
 
-        logger.info("Consultando feature store desde %s", fecha_limite)
-        df = pd.read_sql(query, engine, params={"fecha_limite": fecha_limite})
+        engine = get_engine()
+        df = pd.read_sql(
+            text("SELECT * FROM features WHERE fecha >= :fecha_limite"),
+            engine,
+            params={"fecha_limite": fecha_limite},
+        )
+
+        if df.empty:
+            raise RuntimeError(
+                f"No hay datos en el Feature Store para los últimos {DRIFT_WINDOW_DAYS} días. "
+                "Verificar que el pipeline de ingesta esté corriendo."
+            )
 
         path = '/tmp/drift_recientes.csv'
         df.to_csv(path, index=False)
@@ -87,15 +97,15 @@ def drift_report():
     def calcular_drift(path_referencia, path_recientes):
         """Aplica PSI y KS test a cada feature monitorizada.
 
-        Loguea los resultados como metricas en un run de MLflow del
-        experimento drift_monitoring y genera un grafico PNG como artefacto.
+        Loguea los resultados como métricas en MLflow (experimento drift_monitoring)
+        y genera un gráfico PNG como artefacto.
 
         Args:
-            path_referencia: ruta al CSV de datos de referencia.
-            path_recientes: ruta al CSV de datos recientes.
+            path_referencia: ruta al CSV de datos históricos (Feature Store completo).
+            path_recientes: ruta al CSV de datos recientes (ventana DRIFT_WINDOW_DAYS).
 
         Returns:
-            dict con resultados de drift por feature.
+            dict: resultados de drift por feature.
         """
         import logging
 
@@ -104,10 +114,9 @@ def drift_report():
         from ml_pipeline.config import (
             DRIFT_EXPERIMENT_NAME,
             DRIFT_FEATURES,
+            KS_PVALUE_THRESHOLD,
             PSI_BINS,
             PSI_THRESHOLD,
-            KS_PVALUE_THRESHOLD,
-            TIPOEXTRACCION_MAP,
         )
         from ml_pipeline.drift import calcular_ks, calcular_psi, generar_reporte_drift
 
@@ -117,12 +126,7 @@ def drift_report():
         df_ref = pd.read_csv(path_referencia)
         df_rec = pd.read_csv(path_recientes)
 
-        # Codificar tipoextraccion en referencia (recientes ya viene codificado del feature store)
-        if 'tipoextraccion' in df_ref.columns:
-            df_ref['tipoextraccion'] = df_ref['tipoextraccion'].map(TIPOEXTRACCION_MAP)
-
         mlflow.set_experiment(DRIFT_EXPERIMENT_NAME)
-
         resultados = {}
         hay_drift = False
 
@@ -136,7 +140,7 @@ def drift_report():
                 rec_values = df_rec[feature].dropna().values
 
                 if len(ref_values) == 0 or len(rec_values) == 0:
-                    logger.warning("Feature '%s' sin datos suficientes, saltando.", feature)
+                    logger.warning("Feature '%s' sin datos, saltando.", feature)
                     continue
 
                 psi = calcular_psi(ref_values, rec_values, PSI_BINS)
@@ -168,26 +172,26 @@ def drift_report():
 
             mlflow.log_metric("hay_drift", int(hay_drift))
 
-            # Generar y loguear grafico de drift
             if resultados:
                 png_path = generar_reporte_drift(resultados, PSI_THRESHOLD)
                 mlflow.log_artifact(png_path, artifact_path="drift_reports")
 
-        logger.info("Analisis de drift completado. Drift detectado: %s", hay_drift)
+        logger.info("Análisis de drift completado. Drift detectado: %s", hay_drift)
         return resultados
 
     @task
     def evaluar_model_decay(path_recientes):
-        """Evalua si el modelo de produccion tiene decay sobre datos recientes.
+        """Evalúa si el modelo de producción tiene decay sobre datos recientes.
 
         Carga el modelo con alias 'production', predice sobre los datos
-        recientes del feature store y compara el RMSE contra el baseline.
+        recientes del Feature Store y compara el RMSE contra el baseline
+        guardado como tag en MLflow.
 
         Args:
             path_recientes: ruta al CSV de datos recientes.
 
         Returns:
-            dict con resultado del analisis de decay.
+            dict: resultado del análisis de decay.
         """
         import logging
 
@@ -207,7 +211,6 @@ def drift_report():
 
         df = pd.read_csv(path_recientes)
 
-        # Verificar que hay datos suficientes
         required_cols = ALL_FEATURES_GAS + ['prod_gas']
         missing = set(required_cols) - set(df.columns)
         if missing:
@@ -219,25 +222,20 @@ def drift_report():
             logger.warning("Datos insuficientes para evaluar decay (%d filas)", len(df))
             return {"tiene_decay": False, "motivo": "datos_insuficientes"}
 
-        # Cargar modelo de produccion
         model_uri = f"models:/{MLFLOW_EXPERIMENT_NAME}@production"
         modelo = mlflow.pyfunc.load_model(model_uri)
 
-        # Predecir y calcular RMSE
         X = df[ALL_FEATURES_GAS]
         y = df['prod_gas']
         predicciones = modelo.predict(X)
         rmse_nuevo = float(np.sqrt(mean_squared_error(y, predicciones)))
 
-        # Obtener run_id del modelo en produccion
         client = mlflow.MlflowClient()
         model_version = client.get_model_version_by_alias(MLFLOW_EXPERIMENT_NAME, "production")
         run_id = model_version.run_id
 
-        # Evaluar decay
         resultado = detectar_model_decay(run_id, rmse_nuevo, client)
 
-        # Loguear resultado en MLflow
         mlflow.set_experiment(DRIFT_EXPERIMENT_NAME)
         with mlflow.start_run(run_name="model_decay_check"):
             mlflow.log_metric("rmse_nuevo", rmse_nuevo)
@@ -245,7 +243,7 @@ def drift_report():
             mlflow.log_metric("degradacion_pct", resultado["degradacion_pct"])
             mlflow.log_metric("tiene_decay", int(resultado["tiene_decay"]))
 
-        logger.info("Evaluacion de decay completada: %s", resultado)
+        logger.info("Evaluación de decay completada: %s", resultado)
         return resultado
 
     @task
@@ -253,13 +251,16 @@ def drift_report():
         """Decide si se debe disparar retraining basado en drift y decay.
 
         Si detecta drift significativo en alguna feature o model decay,
-        dispara el DAG ml_pipeline para reentrenar el modelo.
+        dispara el DAG ml_pipeline para reentrenar el modelo vía API REST.
 
         Args:
             drift_results: dict con resultados de drift por feature.
-            decay_results: dict con resultado del analisis de decay.
+            decay_results: dict con resultado del análisis de decay.
         """
         import logging
+        import os
+
+        import requests
 
         logger = logging.getLogger(__name__)
 
@@ -272,7 +273,10 @@ def drift_report():
         if hay_drift or hay_decay:
             motivos = []
             if hay_drift:
-                features_drift = [f for f, r in drift_results.items() if r.get("drift_psi") or r.get("drift_ks")]
+                features_drift = [
+                    f for f, r in drift_results.items()
+                    if r.get("drift_psi") or r.get("drift_ks")
+                ]
                 motivos.append(f"drift en: {', '.join(features_drift)}")
             if hay_decay:
                 motivos.append(f"model decay ({decay_results.get('degradacion_pct', 0):.1%})")
@@ -282,21 +286,16 @@ def drift_report():
                 "; ".join(motivos),
             )
 
-            # Disparar retraining via API REST de Airflow
-            import os
-            import requests
-
-            api_url = os.environ.get(
-                "AIRFLOW_API_URL",
-                "http://airflow-apiserver:8080/api/v2",
-            )
+            api_url = os.environ.get("AIRFLOW_API_URL", "http://airflow-apiserver:8080/api/v2")
             api_user = os.environ.get("AIRFLOW_API_USER")
             api_password = os.environ.get("AIRFLOW_API_PASSWORD")
+
             if not api_user or not api_password:
                 raise RuntimeError(
-                    "AIRFLOW_API_USER / AIRFLOW_API_PASSWORD no estan definidos. "
+                    "AIRFLOW_API_USER / AIRFLOW_API_PASSWORD no están definidos. "
                     "Configurarlos en .env para permitir disparar retraining."
                 )
+
             try:
                 resp = requests.post(
                     f"{api_url}/dags/ml_pipeline/dagRuns",
@@ -307,7 +306,6 @@ def drift_report():
                 resp.raise_for_status()
                 logger.info("DAG ml_pipeline disparado exitosamente: %s", resp.json())
             except Exception as exc:
-                logger.error("Error al disparar ml_pipeline: %s", exc)
                 raise RuntimeError(f"No se pudo disparar retraining: {exc}") from exc
         else:
             logger.info("No se requiere retraining. Modelo y datos estables.")
