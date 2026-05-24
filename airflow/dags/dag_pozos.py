@@ -42,11 +42,13 @@ def ml_pipeline():
         import logging
 
         import pandas as pd
-        from ml_pipeline.config import DATASET_DOWNLOAD_URL
+        from ml_pipeline.config import DATASET_DOWNLOAD_URL, DEV_ROW_LIMIT
 
         logger = logging.getLogger(__name__)
         logger.info("Iniciando descarga desde: %s", DATASET_DOWNLOAD_URL)
-        df = pd.read_csv(DATASET_DOWNLOAD_URL)
+        df = pd.read_csv(DATASET_DOWNLOAD_URL, nrows=DEV_ROW_LIMIT)
+        if DEV_ROW_LIMIT:
+            logger.info("DEV_ROW_LIMIT=%d activo", DEV_ROW_LIMIT)
         logger.info("Descarga completa: %d filas, %d columnas", len(df), len(df.columns))
         df.to_csv(save_path, index=False)
         logger.info("Archivo guardado en: %s", save_path)
@@ -114,6 +116,16 @@ def ml_pipeline():
             df = df.dropna(subset=['tipoextraccion'])
             df['tipoextraccion'] = df['tipoextraccion'].astype(int)
 
+        # Shift temporal: features del mes T predicen prod_gas del mes T+1.
+        # Esto evita data leakage: al operar el modelo en produccion, las variables
+        # correlacionadas del mes en curso (prod_pet, prod_agua, tef) no se conocen
+        # al principio del mes, pero si las del mes anterior.
+        df = df.sort_values(['idpozo', 'fecha_data'])
+        df['prod_gas'] = df.groupby('idpozo')['prod_gas'].shift(-1)
+        n_pre = len(df)
+        df = df.dropna(subset=['prod_gas'])
+        logger.info("Shift temporal aplicado: %d filas eliminadas (ultimo mes por pozo)", n_pre - len(df))
+
         df = df.rename(columns={'idpozo': 'id_pozo', 'fecha_data': 'fecha'})
         df['id_pozo'] = df['id_pozo'].astype(str)
         df['fecha'] = pd.to_datetime(df['fecha']).dt.strftime('%Y-%m-%d')
@@ -161,17 +173,18 @@ def ml_pipeline():
 
     @task
     def read_features_from_store(persist_metadata):
-        """Lee las features desde el Feature Store filtrando por date_from/date_to.
+        """Valida que el Feature Store tenga datos para el rango solicitado.
 
-        Es la única fuente de datos del entrenamiento. Si la tabla está vacía
-        para el rango solicitado, falla ruidosamente para garantizar que el
-        pipeline no se entrene silenciosamente sobre datos incorrectos.
+        Falla ruidosamente si no hay features, para que el entrenamiento
+        no corra silenciosamente sobre datos incorrectos.
+        Devuelve solo metadata (no el DataFrame) para evitar XComs grandes
+        que saturan el API server de Airflow 3.
 
         Args:
             persist_metadata: salida de persist_features() (dependencia de orden).
 
         Returns:
-            dict de listas con todas las columnas del feature store.
+            dict con rows, date_from, date_to del Feature Store.
         """
         import logging
         from datetime import date
@@ -200,45 +213,47 @@ def ml_pipeline():
                 "El entrenamiento no puede continuar sin features persistidas."
             )
 
-        # Aplicar filtro date_from si se especificó
         if date_from_str:
             df = df[df['fecha'] >= date_from_str]
             logger.info("Filtrado desde %s: %d filas", date_from_str, len(df))
 
-        payload = df.to_dict(orient='list')
-        payload['_feature_store_meta'] = {
-            "rows": len(df),
-            "date_from": date_from_str or "all",
-            "date_to": date_to_str or "all",
-        }
-        logger.info(
-            "Feature Store: lectura completa — %d filas (rango %s → %s)",
-            len(df), date_from_str or "all", date_to_str or "all",
-        )
-        return payload
+        meta = {"rows": len(df), "date_from": date_from_str or "all", "date_to": date_to_str or "all"}
+        logger.info("Feature Store validado: %d filas disponibles para entrenamiento", len(df))
+        return meta
 
     @task
-    def train_experiments(data):
+    def train_experiments(feature_meta):
         """Entrena todos los experimentos definidos en config y registra en MLflow.
 
+        Lee directamente del Feature Store para evitar XComs gigantes.
+
         Args:
-            data: payload del feature store (dict de listas + _feature_store_meta).
+            feature_meta: metadata del Feature Store (rows, date_from, date_to).
 
         Returns:
             lista de dicts con run_id y métricas de cada experimento.
         """
         import logging
+        from datetime import date
 
+        import pandas as pd
         from ml_pipeline.config import EXPERIMENTS
+        from ml_pipeline.feature_store import FeatureStore
         from ml_pipeline.training import train_and_log
 
         logger = logging.getLogger(__name__)
-        meta = data.pop('_feature_store_meta', None)
-        if meta is None:
-            raise RuntimeError(
-                "data no contiene metadata del feature store — el entrenamiento "
-                "solo puede correr a partir de read_features_from_store()."
-            )
+
+        # Leer directamente del Feature Store (evita XCom de cientos de MB)
+        date_to_str = feature_meta.get("date_to")
+        cutoff = date.fromisoformat(date_to_str) if date_to_str and date_to_str != "all" else None
+        fs = FeatureStore()
+        df = fs.get_training_features(cutoff_date=cutoff)
+
+        date_from_str = feature_meta.get("date_from")
+        if date_from_str and date_from_str != "all":
+            df = df[df["fecha"] >= date_from_str]
+
+        data = df.to_dict(orient="list")
 
         results = []
         for i, exp_cfg in enumerate(EXPERIMENTS):
@@ -247,7 +262,7 @@ def ml_pipeline():
                 i + 1, len(EXPERIMENTS),
                 exp_cfg['target'], exp_cfg['features'], exp_cfg['model_params'],
             )
-            result = train_and_log(data, exp_cfg, feature_store_meta=meta)
+            result = train_and_log(data, exp_cfg, feature_store_meta=feature_meta)
             results.append(result)
             logger.info(
                 "Experimento %d/%d completado — RMSE=%.4f",

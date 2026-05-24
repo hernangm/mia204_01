@@ -1,7 +1,7 @@
 # ml_pipeline/config.py — single source of truth for pipeline constants
 
 # Limitar filas durante pruebas para acelerar el pipeline. None = todos los datos.
-DEV_ROW_LIMIT = None
+DEV_ROW_LIMIT = 5000
 
 # Producción mensual por pozo (no convencional)
 DATASET_DOWNLOAD_URL = (
