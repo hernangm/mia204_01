@@ -14,7 +14,7 @@ Requisitos previos:
     - Stack levantado con: docker-compose up
     - Pipeline de ingesta y feature engineering ejecutado al menos una vez
       (via el DAG `ml_pipeline` en Airflow, o corriendo los pasos manualmente)
-    - Variable de entorno MLFLOW_TRACKING_URI y FEATURESTORE_DATABASE_URL
+    - Variable de entorno MLFLOW_TRACKING_URI y FEATURESTORE_DB_URL
       configuradas (o usar los valores por defecto de ml_pipeline.db)
 """
 
@@ -47,7 +47,7 @@ for _plugins_candidate in (
         break
 
 from ml_pipeline.config import EXPERIMENTS, MLFLOW_EXPERIMENT_NAME  # noqa: E402
-from ml_pipeline.db import get_engine  # noqa: E402
+from ml_pipeline.feature_store import FeatureStore  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -107,6 +107,10 @@ def load_features(cutoff: date) -> pd.DataFrame:
     """
     Carga features del Feature Store filtrando por fecha de corte.
 
+    Delega completamente en FeatureStore.get_training_features() para garantizar
+    point-in-time correctness: solo se devuelven registros con fecha <= cutoff,
+    lo que hace reproducible el entrenamiento para cualquier fecha histórica.
+
     Args:
         cutoff: Solo se incluyen registros con fecha <= cutoff.
 
@@ -116,20 +120,7 @@ def load_features(cutoff: date) -> pd.DataFrame:
     Raises:
         RuntimeError: Si no se pueden leer los datos del Feature Store.
     """
-    engine = get_engine()
-    query = (
-        "SELECT id_pozo, fecha, tipoextraccion, prod_gas, prod_agua, "
-        "tef, prod_pet, profundidad "
-        "FROM features "
-        "WHERE fecha <= %(cutoff)s"
-    )
-    try:
-        df = pd.read_sql(query, engine, params={"cutoff": cutoff})
-    except Exception as exc:
-        raise RuntimeError(f"Error al leer el Feature Store: {exc}") from exc
-
-    log.info("Features cargados: %d filas (fecha <= %s)", len(df), cutoff)
-    return df
+    return FeatureStore().get_training_features(cutoff_date=cutoff)
 
 
 # ---------------------------------------------------------------------------

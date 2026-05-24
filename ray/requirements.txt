@@ -1,0 +1,4 @@
+ray[serve]~=2.40
+mlflow~=3.10
+scikit-learn~=1.5
+pandas~=2.2

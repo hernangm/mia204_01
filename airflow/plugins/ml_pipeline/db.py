@@ -1,8 +1,8 @@
-"""Single source of truth for the featurestore SQLAlchemy engine.
+"""Fuente única para el engine SQLAlchemy del featurestore.
 
-Every module in ml_pipeline that needs to talk to the featurestore should call
-get_engine() rather than building its own connection string. This keeps the
-default URL in one place and lets tests/CI override it via env var.
+Todos los módulos de ml_pipeline que necesiten hablar con el featurestore
+deben llamar a get_engine() en lugar de construir su propia conexión.
+Esto mantiene la URL en un solo lugar y permite overridearla con env vars.
 """
 
 import os
@@ -10,9 +10,10 @@ import os
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 
+# missing-features usa FEATURESTORE_DB_URL (vs FEATURESTORE_DATABASE_URL en main)
 DEFAULT_URL = "postgresql+psycopg2://airflow:airflow@postgres:5432/featurestore"
 
 
 def get_engine() -> Engine:
-    url = os.environ.get("FEATURESTORE_DATABASE_URL", DEFAULT_URL)
+    url = os.environ.get("FEATURESTORE_DB_URL", DEFAULT_URL)
     return create_engine(url, pool_pre_ping=True)

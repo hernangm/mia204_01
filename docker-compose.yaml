@@ -71,14 +71,19 @@ x-airflow-common:
     # The following line can be used to set a custom config file, stored in the local config folder
     AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
     MLFLOW_TRACKING_URI: 'http://mlflow:9090'
+    FEATURESTORE_DB_URL: '${FEATURESTORE_DB_URL}'
+    AIRFLOW_API_URL: '${AIRFLOW_API_URL}'
+    AIRFLOW_API_USER: '${AIRFLOW_API_USER}'
+    AIRFLOW_API_PASSWORD: '${AIRFLOW_API_PASSWORD}'
   volumes:
     - ${AIRFLOW_PROJ_DIR:-.}/airflow/dags:/opt/airflow/dags
     - ${AIRFLOW_PROJ_DIR:-.}/logs:/opt/airflow/logs
     - ${AIRFLOW_PROJ_DIR:-.}/airflow/config:/opt/airflow/config
     - ${AIRFLOW_PROJ_DIR:-.}/airflow/plugins:/opt/airflow/plugins
+    - ${AIRFLOW_PROJ_DIR:-.}/airflow/tests:/opt/airflow/tests
     - ${AIRFLOW_PROJ_DIR:-.}/data:/opt/airflow/data
     - ${AIRFLOW_PROJ_DIR:-.}/scripts:/opt/airflow/scripts
-    - ${AIRFLOW_PROJ_DIR:-.}/mlruns:/mlflow/mlruns
+    - ./mlruns:/mlflow/mlruns
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
     &airflow-common-depends-on
@@ -95,7 +100,7 @@ services:
       POSTGRES_PASSWORD: airflow
       POSTGRES_DB: airflow
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres-db-volume:/var/lib/postgresql/data
       # Init scripts run automatically on first start of a fresh volume (alphabetical order).
@@ -354,6 +359,29 @@ services:
       --host 0.0.0.0
       --port 9090
       --allowed-hosts "*"
+
+  ray-serve:
+    build:
+      context: ./ray
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:9090
+    volumes:
+      - ./mlruns:/mlflow/mlruns
+    ports:
+      - "8265:8265"    # Ray dashboard
+    expose:
+      - "8001"         # Puerto interno de inferencia
+    depends_on:
+      mlflow:
+        condition: service_started
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8265').read()\" 2>/dev/null || exit 1"
+      interval: 30s
+      timeout: 15s
+      retries: 5
+      start_period: 60s
     restart: always
 
   api:
@@ -363,11 +391,22 @@ services:
       - ${ENV_FILE_PATH:-.env}
     environment:
       DATABASE_URL: postgresql+psycopg2://airflow:airflow@postgres:5432/featurestore
+      MLFLOW_TRACKING_URI: http://mlflow:9090
+      RAY_SERVE_URL: http://ray-serve:8001
+    volumes:
+      # Mismo path de host que los servicios airflow + mlflow para que
+      # mlflow.pyfunc.load_model pueda leer los artefactos referenciados
+      # por el tracking server (que apuntan a /mlflow/mlruns/...).
+      - ./mlruns:/mlflow/mlruns
     ports:
       - "8000:8000"
     depends_on:
       postgres:
         condition: service_healthy
+      mlflow:
+        condition: service_started
+      ray-serve:
+        condition: service_started
     healthcheck:
       test:
         - "CMD-SHELL"
@@ -385,11 +424,14 @@ services:
       - ${ENV_FILE_PATH:-.env}
     environment:
       DATABASE_URL: postgresql+psycopg2://airflow:airflow@postgres:5432/featurestore_test
+      MLFLOW_TRACKING_URI: http://mlflow:9090
     ports:
       - "8001:8000"
     depends_on:
       postgres:
         condition: service_healthy
+      mlflow:
+        condition: service_started
     healthcheck:
       test:
         - "CMD-SHELL"

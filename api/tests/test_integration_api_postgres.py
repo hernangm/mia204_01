@@ -118,7 +118,20 @@ def seed_featurestore_data() -> None:
         tipoextraccion VARCHAR
     );
 
+    CREATE TABLE IF NOT EXISTS features (
+        id SERIAL PRIMARY KEY,
+        id_pozo VARCHAR NOT NULL,
+        fecha DATE NOT NULL,
+        tipoextraccion INT,
+        prod_gas FLOAT,
+        prod_agua FLOAT,
+        tef FLOAT,
+        prod_pet FLOAT,
+        profundidad FLOAT
+    );
+
     TRUNCATE TABLE production RESTART IDENTITY;
+    TRUNCATE TABLE features RESTART IDENTITY;
     TRUNCATE TABLE wells;
 
     INSERT INTO wells (idpozo, sigla, fecha_data) VALUES
@@ -129,6 +142,10 @@ def seed_featurestore_data() -> None:
         ('POZO-INT-001', '2023-10-01', 100.5, 0, 0, 0, 'N/A'),
         ('POZO-INT-001', '2023-11-01', 110.0, 0, 0, 0, 'N/A'),
         ('POZO-INT-001', '2023-12-01', 115.25, 0, 0, 0, 'N/A');
+
+    INSERT INTO features (id_pozo, fecha, tipoextraccion, prod_gas, prod_agua, tef, prod_pet, profundidad) VALUES
+        ('POZO-INT-001', '2023-10-01', 8, 100.5, 5.0, 30.0, 10.0, 2500.0),
+        ('POZO-INT-001', '2023-11-01', 8, 110.0, 5.5, 30.0, 11.0, 2500.0);
     """
 
     _run_compose_exec(
@@ -173,11 +190,15 @@ def test_forecast_endpoint_with_live_postgres_data() -> None:
         timeout=10.0,
     )
 
+    # El endpoint ahora sirve predicciones del modelo productivo de MLflow.
+    # Aserta el contrato (id del pozo, fechas, schema) y no valores
+    # exactos de predicción, que dependen de cuál versión del modelo
+    # tenga asignado el alias `production` en este entorno.
     assert response.status_code == 200
-    assert response.json() == {
-        "id_well": "POZO-INT-001",
-        "data": [
-            {"date": "2023-10-01", "prod": 100.5},
-            {"date": "2023-11-01", "prod": 110.0},
-        ],
-    }
+    body = response.json()
+    assert body["id_well"] == "POZO-INT-001"
+    assert len(body["data"]) == 2
+    assert [point["date"] for point in body["data"]] == ["2023-10-01", "2023-11-01"]
+    for point in body["data"]:
+        assert set(point) == {"date", "prod"}
+        assert isinstance(point["prod"], (int, float))

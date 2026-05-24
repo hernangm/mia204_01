@@ -1,142 +1,221 @@
-"""Stage 3 of the ml_pipeline DAG: train models and log to MLflow.
+"""Módulo de entrenamiento con integración MLflow.
 
-`train_one_experiment` is the per-experiment trainer designed to be called
-from a dynamically-mapped Airflow task (one mapped instance per dict in
-ml_pipeline.config.EXPERIMENTS). Each call:
-  * trains a RandomForestRegressor with the experiment's params
-  * logs params + metrics + the fitted model under MLFLOW_EXPERIMENT_NAME
-  * registers the model under REGISTERED_MODEL_NAME
-
-`promote_best_run` consumes the list of mapped results and tags the lowest-rmse
-version of the registered model with the alias 'production'.
+Entrena modelos scikit-learn y registra parámetros, métricas y
+artefactos en el tracking server de MLflow.
 """
 
 import logging
-import os
 
-import mlflow
-import mlflow.sklearn
-import pandas as pd
-from mlflow import MlflowClient
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.model_selection import train_test_split
-
-from ml_pipeline.config import MLFLOW_EXPERIMENT_NAME
-from ml_pipeline.db import get_engine
-
-log = logging.getLogger(__name__)
-
-REGISTERED_MODEL_NAME = "hydrocarbon_forecast"
-PRODUCTION_ALIAS = "production"
-TEST_SIZE = 0.2
-RANDOM_STATE = 204
+logger = logging.getLogger(__name__)
 
 
-def _setup_mlflow() -> None:
-    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
-    if not tracking_uri:
-        raise RuntimeError("MLFLOW_TRACKING_URI is not set")
-    mlflow.set_tracking_uri(tracking_uri)
-    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
+def _feature_set_tag(features):
+    """Devuelve un tag descriptivo según el conjunto de features usado."""
+    from ml_pipeline.config import ALL_FEATURES_GAS, REDUCED_FEATURES_GAS
+
+    if features == ALL_FEATURES_GAS:
+        return "all"
+    if features == REDUCED_FEATURES_GAS:
+        return "reduced"
+    return "custom"
 
 
-def _load_features() -> pd.DataFrame:
-    engine = get_engine()
-    try:
-        return pd.read_sql(
-            "SELECT id_pozo, fecha, tipoextraccion, prod_gas, prod_agua, "
-            "tef, prod_pet, profundidad FROM features",
-            engine,
-        )
-    except Exception as exc:
-        raise RuntimeError(f"Failed to read features table: {exc}") from exc
+def train_and_log(data_dict, experiment_cfg, feature_store_meta=None):
+    """Entrena un modelo y registra todo en MLflow.
 
+    Args:
+        data_dict: dict de listas (dataset leido del feature store).
+        experiment_cfg: dict con claves model_type, model_params, target, features.
+        feature_store_meta: dict con rows/date_from/date_to del feature store.
+            Si esta presente se taggea data_source=featurestore en el run.
 
-def train_one_experiment(experiment: dict) -> dict:
-    """Train one experiment and return {run_id, version, rmse}.
-
-    `experiment` is one entry from ml_pipeline.config.EXPERIMENTS.
+    Returns:
+        dict con run_id, rmse, mae, r2.
     """
-    _setup_mlflow()
-    df = _load_features()
-    if df.empty:
-        raise RuntimeError("features table is empty; did build_features run?")
+    import mlflow
+    import mlflow.sklearn
+    import numpy as np
+    import pandas as pd
+    from mlflow.models import infer_signature
+    from sklearn.ensemble import RandomForestRegressor
+    from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+    from sklearn.model_selection import train_test_split
 
-    target = experiment["target"]
-    features = experiment["features"]
-    params = experiment["model_params"]
-    log.info("Training experiment: target=%s features=%s params=%s", target, features, params)
+    from ml_pipeline.config import MLFLOW_EXPERIMENT_NAME
+
+    # Silenciar mensajes informativos de MLflow que Airflow captura como ERROR
+    logging.getLogger("mlflow").setLevel(logging.WARNING)
+    logging.getLogger("mlflow.sklearn").setLevel(logging.WARNING)
+    logging.getLogger("mlflow.store.model_registry").setLevel(logging.WARNING)
+
+    df = pd.DataFrame(data_dict)
+
+    target = experiment_cfg["target"]
+    features = experiment_cfg["features"]
+    model_params = experiment_cfg["model_params"]
 
     X = df[features]
     y = df[target]
+
+    # --- Train / test split (80/20) ---
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE
+        X, y, test_size=0.2, random_state=model_params.get("random_state", 42)
     )
+
+    mlflow.set_experiment(MLFLOW_EXPERIMENT_NAME)
 
     with mlflow.start_run() as run:
-        mlflow.log_param("model_type", experiment["model_type"])
+        # --- Tags ---
+        mlflow.set_tag("feature_set", _feature_set_tag(features))
+        mlflow.set_tag("model_type", experiment_cfg.get("model_type", "random_forest"))
+
+        # Audit del origen de los datos: cumple Req #3 del SPEC (data_source=featurestore).
+        if feature_store_meta is not None:
+            mlflow.set_tag("data_source", "featurestore")
+            mlflow.log_param("feature_store_rows", int(feature_store_meta.get("rows", 0)))
+            mlflow.log_param("feature_store_date_from", str(feature_store_meta.get("date_from", "all")))
+            mlflow.log_param("feature_store_date_to", str(feature_store_meta.get("date_to", "all")))
+
+        # --- Dataset ---
+        dataset = mlflow.data.from_pandas(
+            df[features + [target]],
+            name="produccion_no_convencional",
+            targets=target,
+        )
+        mlflow.log_input(dataset, context="training")
+
+        # --- Parámetros ---
         mlflow.log_param("target", target)
-        mlflow.log_param("features", ",".join(features))
-        for key, value in params.items():
-            mlflow.log_param(key, value)
+        mlflow.log_param("features", ", ".join(features))
+        mlflow.log_param("n_features", len(features))
+        mlflow.log_param("n_samples_total", len(df))
+        mlflow.log_param("n_samples_train", len(X_train))
+        mlflow.log_param("n_samples_test", len(X_test))
+        mlflow.log_params(model_params)
 
-        model = RandomForestRegressor(**params)
-        model.fit(X_train, y_train)
-        preds = model.predict(X_test)
+        # --- Entrenamiento ---
+        modelo = RandomForestRegressor(**model_params)
+        modelo.fit(X_train, y_train)
 
-        rmse = float(mean_squared_error(y_test, preds) ** 0.5)
-        r2 = float(r2_score(y_test, preds))
-        mae = float(mean_absolute_error(y_test, preds))
-        mlflow.log_metric("rmse", rmse)
-        mlflow.log_metric("r2", r2)
-        mlflow.log_metric("mae", mae)
+        # --- Métricas sobre train ---
+        y_pred_train = modelo.predict(X_train)
+        train_rmse = float(np.sqrt(mean_squared_error(y_train, y_pred_train)))
+        train_mae = float(mean_absolute_error(y_train, y_pred_train))
+        train_r2 = float(r2_score(y_train, y_pred_train))
 
-        info = mlflow.sklearn.log_model(
-            sk_model=model,
+        mlflow.log_metric("train_rmse", train_rmse)
+        mlflow.log_metric("train_mae", train_mae)
+        mlflow.log_metric("train_r2", train_r2)
+
+        # --- Métricas sobre test (las que importan) ---
+        y_pred_test = modelo.predict(X_test)
+        test_rmse = float(np.sqrt(mean_squared_error(y_test, y_pred_test)))
+        test_mae = float(mean_absolute_error(y_test, y_pred_test))
+        test_r2 = float(r2_score(y_test, y_pred_test))
+
+        mlflow.log_metric("test_rmse", test_rmse)
+        mlflow.log_metric("test_mae", test_mae)
+        mlflow.log_metric("test_r2", test_r2)
+
+        # --- Feature importance (gráfico) ---
+        _log_feature_importance(modelo, features)
+
+        # --- Firma del modelo (input/output schema) ---
+        signature = infer_signature(X_train, y_pred_train)
+
+        # --- Registro del modelo ---
+        mlflow.sklearn.log_model(
+            modelo,
             name="model",
-            registered_model_name=REGISTERED_MODEL_NAME,
+            signature=signature,
+            input_example=X_train.head(3),
+            registered_model_name=MLFLOW_EXPERIMENT_NAME,
         )
 
-        version = info.registered_model_version
-        if version is None:
-            # Fallback path if log_model didn't surface the version directly.
-            client = MlflowClient()
-            matches = client.search_model_versions(f"run_id='{run.info.run_id}'")
-            if not matches:
-                raise RuntimeError(
-                    f"log_model registered no version for run {run.info.run_id}"
-                )
-            version = matches[0].version
-
-        log.info(
-            "Run %s registered as version %s (rmse=%.4f r2=%.4f)",
+        logger.info(
+            "Run %s — train RMSE=%.4f / test RMSE=%.4f  R²=%.4f",
             run.info.run_id,
-            version,
-            rmse,
-            r2,
+            train_rmse,
+            test_rmse,
+            test_r2,
         )
-        return {"run_id": run.info.run_id, "version": int(version), "rmse": rmse}
+
+        return {
+            "run_id": run.info.run_id,
+            "rmse": test_rmse,
+            "mae": test_mae,
+            "r2": test_r2,
+        }
 
 
-def promote_best_run(results: list[dict]) -> dict:
-    """Pick the lowest-rmse mapped result and assign the production alias to it."""
-    if not results:
-        raise RuntimeError("No training results to promote")
+def _log_feature_importance(modelo, features):
+    """Genera y registra un gráfico de importancia de features como artefacto."""
+    import os
+    import tempfile
+
+    import mlflow
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    importances = modelo.feature_importances_
+    idx = np.argsort(importances)
+
+    fig, ax = plt.subplots(figsize=(8, max(3, len(features) * 0.5)))
+    ax.barh(range(len(features)), importances[idx])
+    ax.set_yticks(range(len(features)))
+    ax.set_yticklabels([features[i] for i in idx])
+    ax.set_xlabel("Importancia")
+    ax.set_title("Feature Importance — RandomForest")
+    fig.tight_layout()
+
+    tmp_path = os.path.join(tempfile.gettempdir(), "feature_importance.png")
+    fig.savefig(tmp_path, dpi=100)
+    plt.close(fig)
+
+    mlflow.log_artifact(tmp_path, artifact_path="plots")
+
+
+def promote_best_model(results):
+    """Promueve el modelo con menor RMSE (test) asignándole el alias ``production``.
+
+    Args:
+        results: lista de dicts retornados por ``train_and_log``.
+
+    Returns:
+        dict del mejor resultado con la version promovida.
+    """
+    import mlflow
+
+    from ml_pipeline.config import MLFLOW_EXPERIMENT_NAME
+
     best = min(results, key=lambda r: r["rmse"])
+    client = mlflow.MlflowClient()
 
-    _setup_mlflow()
-    client = MlflowClient()
-    client.set_registered_model_alias(
-        name=REGISTERED_MODEL_NAME,
-        alias=PRODUCTION_ALIAS,
-        version=str(best["version"]),
-    )
-    log.info(
-        "Promoted version %s (run_id=%s, rmse=%.4f) as alias '%s'",
-        best["version"],
-        best["run_id"],
-        best["rmse"],
-        PRODUCTION_ALIAS,
-    )
+    # Buscamos la versión del modelo que corresponde al mejor run
+    model_name = MLFLOW_EXPERIMENT_NAME
+    versions = client.search_model_versions(f"name='{model_name}'")
+    matching = [v for v in versions if v.run_id == best["run_id"]]
+
+    if matching:
+        version = matching[0].version
+        client.set_registered_model_alias(model_name, "production", version)
+
+        # Guardar RMSE baseline para deteccion de model decay
+        from ml_pipeline.config import MLFLOW_BASELINE_RMSE_TAG
+        client.set_tag(best["run_id"], MLFLOW_BASELINE_RMSE_TAG, str(best["rmse"]))
+
+        logger.info(
+            "Modelo v%s (run %s, RMSE=%.4f) promovido como 'production'",
+            version,
+            best["run_id"],
+            best["rmse"],
+        )
+        best["version"] = version
+    else:
+        logger.warning(
+            "No se encontró versión registrada para run %s", best["run_id"]
+        )
+
     return best
