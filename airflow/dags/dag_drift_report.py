@@ -72,10 +72,16 @@ def drift_report():
 
         logger = logging.getLogger(__name__)
 
-        fecha_limite = (datetime.utcnow() - timedelta(days=DRIFT_WINDOW_DAYS)).strftime('%Y-%m-%d')
-        logger.info("Consultando Feature Store desde %s (ventana %d días)", fecha_limite, DRIFT_WINDOW_DAYS)
-
+        # Usar MAX(fecha) del Feature Store como referencia en lugar de utcnow():
+        # en entornos de demo/dev los datos son historicos y utcnow() cae fuera del rango.
         engine = get_engine()
+        with engine.connect() as conn:
+            max_fecha = conn.execute(text("SELECT MAX(fecha) FROM features")).scalar()
+        if max_fecha is None:
+            raise RuntimeError("Feature Store vacío. Ejecutar ml_pipeline primero.")
+        fecha_limite = (max_fecha - timedelta(days=DRIFT_WINDOW_DAYS)).strftime('%Y-%m-%d')
+        logger.info("Consultando Feature Store desde %s (ventana %d días, ref=%s)", fecha_limite, DRIFT_WINDOW_DAYS, max_fecha)
+
         df = pd.read_sql(
             text("SELECT * FROM features WHERE fecha >= :fecha_limite"),
             engine,
@@ -297,10 +303,20 @@ def drift_report():
                 )
 
             try:
+                # Airflow 3 usa JWT — obtener token primero
+                base_url = api_url.replace("/api/v2", "")
+                token_resp = requests.post(
+                    f"{base_url}/auth/token",
+                    json={"username": api_user, "password": api_password},
+                    timeout=30,
+                )
+                token_resp.raise_for_status()
+                token = token_resp.json()["access_token"]
+
                 resp = requests.post(
                     f"{api_url}/dags/ml_pipeline/dagRuns",
                     json={"logical_date": None, "conf": {"triggered_by": "drift_report"}},
-                    auth=(api_user, api_password),
+                    headers={"Authorization": f"Bearer {token}"},
                     timeout=30,
                 )
                 resp.raise_for_status()
